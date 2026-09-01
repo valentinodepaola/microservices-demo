@@ -1,0 +1,101 @@
+# Verificación del runner self-hosted.
+#
+# No despliega nada: comprueba que la máquina del equipo está lista para que
+# cd-main.yaml corra sobre ella. Es el "trabajo de prueba" del issue #17 y queda
+# como diagnóstico permanente — cuando un despliegue falle, este workflow dice en
+# menos de un minuto si el problema es la máquina o el pipeline.
+#
+# SEGURIDAD — el fork es un repositorio público y este job corre en una máquina
+# del equipo, sin sandbox y con el usuario de esa persona. Las tres mitigaciones
+# del ADR 0008 están aplicadas aquí y no son negociables:
+#
+#   1. Solo se dispara a mano (workflow_dispatch). Nunca con `pull_request`:
+#      eso ejecutaría código de terceros en la máquina.
+#   2. environment: local-cluster — exige aprobación humana y solo permite `main`.
+#   3. permissions: contents: read — un job comprometido no puede escribir aquí.
+#
+# Ver docs/runner-self-hosted.md y docs/adr/0008-despliegue-continuo-en-dos-fases.md
+
+name: "Verificación del runner self-hosted"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: "Comprobar la máquina del clúster local"
+    runs-on: [self-hosted, order-tracking]
+    environment: local-cluster
+    timeout-minutes: 10
+    env:
+      CONTEXTO_ESPERADO: docker-desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Identificar la máquina
+        run: |
+          set -euo pipefail
+          echo "Equipo:       $(scutil --get ComputerName 2>/dev/null || hostname)"
+          echo "Arquitectura: $(uname -m)"
+          echo "macOS:        $(sw_vers -productVersion 2>/dev/null || uname -sr)"
+          echo "Runner:       ${RUNNER_NAME:-desconocido}"
+          echo "Workspace:    ${GITHUB_WORKSPACE}"
+
+      - name: Verificar las herramientas de despliegue
+        run: |
+          set -euo pipefail
+          faltantes=""
+          for herramienta in docker kubectl skaffold; do
+            if ruta=$(command -v "$herramienta"); then
+              echo "OK    $herramienta -> $ruta"
+            else
+              echo "FALTA $herramienta"
+              faltantes="$faltantes $herramienta"
+            fi
+          done
+          if [ -n "$faltantes" ]; then
+            echo ""
+            echo "El runner no encuentra:$faltantes"
+            echo "El servicio usa el PATH guardado en ~/actions-runner/.path, no el de tu shell."
+            echo "Instala lo que falte, agrega su ruta a ese archivo y reinicia el servicio:"
+            echo "  cd ~/actions-runner && ./svc.sh stop && ./svc.sh start"
+            exit 1
+          fi
+          echo ""
+          docker version --format 'docker engine {{.Server.Version}}'
+          skaffold version
+
+      - name: Verificar el contexto de Kubernetes
+        run: |
+          set -euo pipefail
+          contexto=$(kubectl config current-context)
+          echo "Contexto activo: $contexto"
+          if [ "$contexto" != "$CONTEXTO_ESPERADO" ]; then
+            echo "Se esperaba '$CONTEXTO_ESPERADO'."
+            echo "Desplegar contra otro clúster es exactamente lo que no queremos."
+            exit 1
+          fi
+          kubectl get nodes
+
+      - name: Resumen
+        if: always()
+        run: |
+          {
+            echo "## Verificación del runner self-hosted"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Máquina | \`$(scutil --get ComputerName 2>/dev/null || hostname)\` ($(uname -m)) |"
+            echo "| Runner | \`${RUNNER_NAME:-desconocido}\` |"
+            echo "| Contexto | \`$(kubectl config current-context 2>/dev/null || echo 'no disponible')\` |"
+            echo "| docker | \`$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo 'no disponible')\` |"
+            echo "| skaffold | \`$(skaffold version 2>/dev/null || echo 'no disponible')\` |"
+            echo "| Commit | \`${GITHUB_SHA:0:7}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
