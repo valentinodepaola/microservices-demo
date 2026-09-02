@@ -1,0 +1,116 @@
+# CD — despliega la tienda en el clúster local en cada integración a main.
+#
+# SEGURIDAD — mismas tres reglas no negociables del ADR 0008 (ver
+# docs/runner-self-hosted.md): solo `push` a main, environment con revisor
+# requerido, y permissions: contents: read.
+
+name: "CD - Desplegar en cada merge a main"
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+
+permissions:
+  contents: read
+
+# Un despliegue a la vez. No se cancela a media aplicacion: dejar el cluster
+# a medias es peor que esperar.
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: "Desplegar en docker-desktop"
+    runs-on: [self-hosted, order-tracking]
+    environment: local-cluster
+    timeout-minutes: 30        # build fria de referencia: 11m35s (paso 0)
+    env:
+      CONTEXTO_ESPERADO: docker-desktop
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Marcar el inicio
+        run: echo "INICIO=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Apuntar al cluster correcto
+        run: |
+          set -euo pipefail
+          kubectl config use-context "$CONTEXTO_ESPERADO"
+          kubectl cluster-info
+          # Lo contrario de lo que hace ci-main.yaml, que fuerza local-cluster
+          # false para empujar a GKE. Aqui se declara explicito para que una
+          # config global heredada no provoque un push a ningun registro.
+          skaffold config set --kube-context "$CONTEXTO_ESPERADO" local-cluster true
+
+      - name: Desplegar
+        id: deploy
+        # No hace falta --platform: skaffold detecta la arquitectura del
+        # cluster local solo. El fix real (cartservice truena bajo Rosetta
+        # sin el) vive en el profile "local-arm64" de skaffold.yaml, que se
+        # activa solo por kubeContext == docker-desktop. Ver paso 0.
+        run: skaffold run --tag=${{ github.sha }}
+
+      - name: Esperar a que los Deployments esten disponibles
+        run: |
+          set -euo pipefail
+          for d in adservice cartservice checkoutservice currencyservice \
+                   emailservice frontend loadgenerator paymentservice \
+                   productcatalogservice recommendationservice \
+                   redis-cart shippingservice; do
+            kubectl wait --for=condition=available --timeout=600s deployment/$d
+          done
+
+      - name: Smoke test - la tienda responde sin errores
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          kubectl delete pod -l app=loadgenerator
+          REQUEST_COUNT=0
+          while [ "$REQUEST_COUNT" -lt 50 ]; do
+            sleep 5
+            REQUEST_COUNT=$(kubectl logs -l app=loadgenerator | grep Aggregated | awk '{print $2}')
+            REQUEST_COUNT=${REQUEST_COUNT:-0}
+          done
+          ERROR_COUNT=$(kubectl logs -l app=loadgenerator | grep Aggregated | awk '{print $3}' | sed "s/[(][^)]*[)]//g")
+          echo "Peticiones: $REQUEST_COUNT · errores: $ERROR_COUNT"
+          [ "$ERROR_COUNT" -eq 0 ]
+
+      - name: Rollback automatico
+        id: rollback
+        # Solo si el despliegue si llego a aplicarse: si `skaffold run` fallo
+        # antes de tocar el cluster, no hay nada que revertir y un undo aqui
+        # tumbaria la version que esta sana.
+        if: failure() && steps.deploy.outcome == 'success'
+        run: |
+          # redis-cart queda fuera a proposito: usa redis:alpine, imagen fija,
+          # no genera revision nueva en cada despliegue.
+          for d in adservice cartservice checkoutservice currencyservice \
+                   emailservice frontend loadgenerator paymentservice \
+                   productcatalogservice recommendationservice shippingservice; do
+            kubectl rollout undo deployment/$d || true
+          done
+          for d in frontend checkoutservice cartservice; do
+            kubectl rollout status deployment/$d --timeout=300s || true
+          done
+
+      - name: Resumen
+        if: always()
+        run: |
+          DURACION=$(( ($(date +%s) - INICIO) / 60 ))
+          {
+            echo "## Despliegue en el cluster local"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Commit | \`${GITHUB_SHA:0:7}\` |"
+            echo "| Tag de las imagenes | \`${GITHUB_SHA}\` |"
+            echo "| Resultado | ${{ job.status }} |"
+            echo "| Rollback | ${{ steps.rollback.outcome || 'no hizo falta' }} |"
+            echo "| Duracion | ${DURACION} min |"
+            echo "| Tienda | http://localhost |"
+          } >> "$GITHUB_STEP_SUMMARY"

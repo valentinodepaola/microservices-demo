@@ -29,6 +29,7 @@ on:
       - '.github/workflows/terraform-validate-ci.yaml'
       - 'helm-chart/**'
       - '.github/workflows/helm-chart-ci.yaml'
+  workflow_dispatch:
 jobs:
   code-tests:
     runs-on: ubuntu-24.04
@@ -56,6 +57,10 @@ jobs:
       run: |
         dotnet test src/cartservice/
   deployment-tests:
+    # DESACTIVADO — issue #18 / ADR 0008. Apunta a "prs-gke-cluster" /
+    # "online-boutique-ci", que este equipo no controla. Se conserva como
+    # referencia (no se borra), solo corre si alguien lo pide a mano.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     needs: code-tests
     permissions:

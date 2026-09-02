@@ -12,12 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# DESACTIVADO — issue #18 / ADR 0008. Apunta al proyecto de Google
+# "online-boutique-ci" y al cluster "prs-gke-cluster", que este equipo no
+# controla: falla siempre tal como viene. Se conserva como referencia,
+# no se borra — de aqui salieron los pasos de cd-main.yaml (skaffold run,
+# kubectl wait, smoke test).
+#
+# Si lo disparas a mano con workflow_dispatch, va a fallar igual: el cuerpo
+# depende de github.event.workflow_run.*, que bajo workflow_dispatch viene
+# vacio. Es intencional, no una trampa a arreglar.
+
 name: "Deploy Staging - Pull Request"
 on:
-  workflow_run:
-    workflows: ["Continuous Integration - Pull Request"]
-    types:
-      - completed
+  workflow_dispatch:
 
 # Prevent concurrent deployments for the same PR
 concurrency:
