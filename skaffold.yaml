@@ -92,6 +92,15 @@ profiles:
   - op: add
     path: /manifests/kustomize/paths/1
     value: kustomize/components/network-policies
+- name: local-arm64
+  activation:
+  - kubeContext: docker-desktop
+  patches:
+  - op: add
+    path: /build/artifacts/8/docker/buildArgs
+    value:
+      TARGETARCH: arm64
+      BUILDPLATFORM: linux/arm64
 ---
 apiVersion: skaffold/v3
 kind: Config
