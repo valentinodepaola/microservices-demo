@@ -86,13 +86,28 @@ Dentro de AWS el clúster **no es EKS**: es **k3s sobre una instancia EC2 `x86_6
 
 Lo que **no** cambia, igual que predijo el ADR 0008: los pasos de espera, los smoke tests y el rollback. El profile `local-arm64` de `skaffold.yaml` queda inactivo por sí solo, porque se activa por `kubeContext: docker-desktop`.
 
-### Lo que falta verificar del entorno
+### El entorno, verificado el 10 de septiembre de 2026
 
-El entorno de AWS Academy impone límites que deciden el dimensionamiento, y hasta comprobarlos el Terraform no se puede cerrar:
+Los límites del laboratorio de AWS Academy deciden el dimensionamiento. Se comprobaron contra la API antes de escribir el módulo, y el resultado está registrado en el [issue #44](https://github.com/valentinodepaola/microservices-demo/issues/44):
 
-- **Qué tamaños de instancia permite.** La tienda pide del orden de 4 vCPU y 8–16 GB para sus doce pods. Si el límite queda por debajo, hay que bajar los `resources.requests` o desplegar sin `loadgenerator` — y sin `loadgenerator` los dos smoke tests dejan de funcionar.
-- **Si se pueden crear roles de IAM propios**, o solo existe el rol preexistente del laboratorio.
-- **En qué región se puede operar**, y si el temporizador de sesión detiene las instancias.
+| Límite | Qué se encontró | Consecuencia |
+|---|---|---|
+| Tamaño de instancia | Techo de **2 vCPU** (`large`). `xlarge` en adelante, rechazada | El nodo es `m5.large` |
+| Región | Solo `us-east-1` y `us-west-2` | El módulo opera en `us-east-1` |
+| Roles de IAM | No se pueden crear | Se usa el `LabInstanceProfile` preexistente, que ya trae SSM |
+| Fin de sesión | Las instancias se **detienen**, no se terminan | La infraestructura sobrevive entre sesiones |
+| IP al reiniciar | Cambia, salvo que haya IP elástica asociada | La IP elástica es obligatoria: sin ella se invalidan el certificado de k3s, el *kubeconfig* y la URL pública |
+| Presupuesto | 50 USD; agotarlo desactiva la cuenta | La instancia se detiene a mano al terminar cada jornada |
+
+**El dimensionamiento resultó menos ajustado de lo que se temía.** La estimación de "4 vCPU y 8–16 GB" venía del README de upstream y describe un *node pool* de GKE, no lo que piden los manifiestos: sumando `kustomize/base/`, los `requests` son **1.57 vCPU y 1.34 GiB** y los `limits` 2.83 vCPU y 2.48 GiB. Con 2 vCPU la memoria sobra y la CPU queda justa, así que k3s arranca con `--disable=traefik` —que además libera el puerto 80 para el ServiceLB— y quedan los `requests` como siguiente palanca. Desplegar sin `loadgenerator` sigue siendo el último recurso, porque los dos smoke tests leen sus registros.
+
+**El descarte de EKS quedó con número.** El laboratorio sí ofrece EKS, con roles ya creados. Pero su control plane cuesta del orden de 0.10 USD por hora de reloj y **no se detiene con la sesión**, al no ser una instancia que el laboratorio pueda apagar: unos 2.40 USD diarios corriendo solo, que agotarían los 50 USD en unas tres semanas sin haber desplegado nada.
+
+### La infraestructura
+
+Descrita en [`terraform/aws/`](../terraform/aws/README.md): VPC, subred pública, internet gateway, tabla de rutas, security group con `6443` y `80` —sin SSH, se entra por SSM—, la instancia con k3s y su IP elástica. El estado vive en S3 con bloqueo nativo.
+
+El módulo **crea la infraestructura y no despliega la aplicación**: eso queda para `cd-main.yaml`, que es el reapuntamiento pendiente del issue #37.
 
 ## Páginas relacionadas
 
