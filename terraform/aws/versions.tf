@@ -7,6 +7,14 @@ terraform {
       version = "~> 6.64"
     }
   }
+
+  backend "s3" {
+    bucket       = "tfstate-boutique-614858348004"
+    key          = "fase-b/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 
 provider "aws" {
