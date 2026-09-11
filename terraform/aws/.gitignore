@@ -11,3 +11,8 @@
 # en texto plano.
 *.tfstate
 *.tfstate.*
+
+# Los planes guardados llevan una copia del estado dentro, incluidos los
+# valores sensibles que el estado pueda tener. Se regeneran con un comando.
+tfplan
+*.tfplan
