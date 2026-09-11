@@ -37,6 +37,7 @@ jobs:
           # gcp-heredado: modulo de upstream, inactivo. Se valida su sintaxis,
           # pero no se le exige `terraform fmt` (ver su README).
           - gcp-heredado
+          - aws
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4
@@ -45,3 +46,7 @@ jobs:
         run: |
           terraform init -backend=false
           terraform validate
+      - name: terraform fmt -check
+        if: matrix.module == 'aws'
+        working-directory: terraform/${{ matrix.module }}
+        run: terraform fmt -check -diff
