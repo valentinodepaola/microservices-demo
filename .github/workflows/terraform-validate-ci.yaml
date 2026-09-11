@@ -25,13 +25,23 @@ on:
       - 'terraform/**'
       - '.github/workflows/terraform-validate-ci.yaml'
 jobs:
+  # Un job por modulo: si uno falla, se ve cual sin leer logs.
+  # `terraform validate` sobre un directorio vacio devuelve exito, asi que
+  # cada modulo tiene que nombrarse explicitamente aqui o no se valida nada.
   terraform-validate-ci:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          # gcp-heredado: modulo de upstream, inactivo. Se valida su sintaxis,
+          # pero no se le exige `terraform fmt` (ver su README).
+          - gcp-heredado
     steps:
       - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v4
-      - name: terraform init & validate
+      - name: terraform init & validate (${{ matrix.module }})
+        working-directory: terraform/${{ matrix.module }}
         run: |
-          cd terraform/
           terraform init -backend=false
           terraform validate

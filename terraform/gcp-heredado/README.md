@@ -12,6 +12,24 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. -->
 
+> [!IMPORTANT]
+> ## Este módulo no se usa. Es el de upstream, y se conserva como referencia.
+>
+> Describe la infraestructura original de Google: un clúster de **GKE Autopilot**, una instancia de **Memorystore** y dos `null_resource` que despliegan la aplicación con `kubectl apply` dentro del mismo `terraform apply`. **Nunca se ejecutó en este proyecto.**
+>
+> El proyecto despliega la fase B sobre **AWS**, con un clúster de **k3s en una instancia EC2**, por el acceso institucional a AWS Academy. La razón completa está en el [ADR 0010](../../docs/adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md).
+>
+> **El módulo vigente es [`terraform/aws/`](../aws/).**
+>
+> Se conserva por tres motivos:
+>
+> 1. Es el punto de partida real del proyecto y documenta de dónde se venía, igual que se hizo con los workflows de despliegue heredados.
+> 2. Muestra por contraste una decisión de diseño del módulo nuevo: aquí Terraform **crea el clúster y además despliega la aplicación**; en `terraform/aws/` esas dos responsabilidades están separadas — Terraform crea la infraestructura y `cd-main.yaml` despliega la tienda dentro.
+> 3. El CI sigue validando su sintaxis, pero **no** se le exige `terraform fmt`: es código heredado y reformatearlo alteraría el registro sin ganar nada.
+>
+> Lo que sigue es el README original de Google, sin modificar.
+
+
 # Use Terraform to deploy Online Boutique on a GKE cluster
 
 This page walks you through the steps required to deploy the [Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo) sample application on a [Google Kubernetes Engine (GKE)](https://cloud.google.com/kubernetes-engine) cluster using Terraform.
