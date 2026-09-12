@@ -38,7 +38,7 @@ Note that this workflow does not update the image tags used in `release/kubernet
 
 ### Cleanup - [cleanup.yaml](cleanup.yaml)
 
-This workflow runs when a PR closes, regardless of whether it was merged into main. This workflow deletes the PR-specific GKE namespace in the test cluster.
+**Disabled — kept for reference only.** It used to run when a PR closed, deleting the PR-specific GKE namespace in the test cluster. It targets Google's `online-boutique-ci` project and `prs-gke-cluster`, which this fork does not control, so it always failed. Its trigger is now `workflow_dispatch`; see the comment at the top of the file and [ADR 0008](../../docs/adr/0008-despliegue-continuo-en-dos-fases.md).
 
 ### Manual Release Builder - [make-release.yaml](make-release.yaml)
 
