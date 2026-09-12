@@ -12,21 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# DESACTIVADO — ADR 0008, misma razon que deploy-pr.yaml. Borra el namespace
+# que deploy-pr.yaml creaba en el cluster "prs-gke-cluster" del proyecto de
+# Google "online-boutique-ci", que este equipo no controla. Con deploy-pr.yaml
+# desactivado no hay namespace que limpiar, y la autenticacion falla siempre:
+# el workload identity pool de Google tiene una condicion de atributo que solo
+# acepta su propio repositorio.
+#
+# Fallo en los tres merges que tocaron rutas no ignoradas — 1 y 4 de septiembre
+# y 12 de septiembre de 2026 — dejando una marca roja permanente en main.
+#
+# Se conserva como referencia, no se borra.
+#
+# Ademas se quita el disparador "pull_request_target", que corre con los
+# permisos del repositorio base en lugar de los del fork que propone el cambio.
+# En un repositorio publico es el vector clasico para exfiltrar secretos desde
+# un Pull Request ajeno, y aqui no aporta nada porque el job no puede completarse.
+
 name: "Clean up deployment"
 on:
-  pull_request_target:
-    # run on pull requests targeting main
-    branches:
-      - main
-    types: closed
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - 'kustomize/**'
-      - '.github/workflows/kustomize-build-ci.yaml'
-      - 'terraform/**'
-      - '.github/workflows/terraform-validate-ci.yaml'
+  workflow_dispatch:
 jobs:
   cleanup-namespace:
     runs-on: ubuntu-24.04
