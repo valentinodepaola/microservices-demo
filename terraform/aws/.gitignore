@@ -1,0 +1,18 @@
+# El plugin que descarga `terraform init`: 769 MB que se reconstruyen con
+# un comando. Es el node_modules/ de Terraform — nunca va al repositorio.
+.terraform/
+
+# El archivo de bloqueo SI se versiona: fija la version exacta del provider
+# para que todo el equipo use la misma. El .gitignore de la raiz lo excluye
+# (viene de upstream); esta linea lo rescata.
+!.terraform.lock.hcl
+
+# El estado jamas va al repositorio: vive en S3 y puede contener secretos
+# en texto plano.
+*.tfstate
+*.tfstate.*
+
+# Los planes guardados llevan una copia del estado dentro, incluidos los
+# valores sensibles que el estado pueda tener. Se regeneran con un comando.
+tfplan
+*.tfplan
