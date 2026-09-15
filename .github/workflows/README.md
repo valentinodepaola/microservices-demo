@@ -12,9 +12,13 @@ We also host a test GKE cluster, which is where the deploy tests run. Every PR h
 
 **Note**: In order for the current CI/CD setup to work on your pull request, you must branch directly off the repo (no forks). This is because the Github secrets necessary for these tests aren't copied over when you fork.
 
-### Code Tests - [ci-pr.yaml](ci-pr.yaml)
+### Code Tests - [ci-pr.yaml](ci-pr.yaml), [cd-main.yaml](cd-main.yaml), [ci-main.yaml](ci-main.yaml)
 
-These tests run on every commit for every open PR, as well as any commit to main / any release branch. Currently, this workflow runs only Go unit tests.
+Go and C# unit tests run in three places:
+
+- `ci-pr.yaml` on every commit of every open PR: Go tests for `shippingservice`, `productcatalogservice` and `frontend/validator`, and C# tests for `cartservice`.
+- `cd-main.yaml` on every push to main, as the `pruebas` job, with the same list as `ci-pr.yaml`. The `deploy` job `needs:` it, so a commit with failing tests is never deployed. See [docs/despliegue-continuo.md](../../docs/despliegue-continuo.md#las-pruebas-van-primero).
+- `ci-main.yaml` on pushes to `release/*` branches, or when run manually. It does not run on main, so the tests that gate a deployment live in a single place.
 
 
 ### Deploy Tests- [ci-pr.yaml](ci-pr.yaml)

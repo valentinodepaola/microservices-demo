@@ -15,9 +15,9 @@
 name: "Continuous Integration - Main/Release"
 on:
   push:
-    # run on pushes to main or release/*
+    # run on pushes to release/*. Pushes to main run the unit tests inside
+    # cd-main.yaml, right before the deploy (issue #53).
     branches:
-      - main
       - release/*
     paths-ignore:
       - '**/*.md'

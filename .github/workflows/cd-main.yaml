@@ -1,4 +1,5 @@
 # CD — despliega la tienda en el clúster local en cada integración a main.
+# Primero corren las pruebas unitarias; el despliegue arranca solo si pasan.
 #
 # SEGURIDAD — mismas tres reglas no negociables del ADR 0008 (ver
 # docs/runner-self-hosted.md): solo `push` a main, environment con revisor
@@ -24,8 +25,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  pruebas:
+    name: "Pruebas unitarias"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        env:
+          DOTNET_INSTALL_DIR: "./.dotnet"
+        with:
+          dotnet-version: '10.0'
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache-dependency-path: |
+            src/shippingservice/go.sum
+            src/productcatalogservice/go.sum
+            src/frontend/go.sum
+      - name: Pruebas de Go
+        timeout-minutes: 10
+        run: |
+          for GO_PACKAGE in "shippingservice" "productcatalogservice" "frontend/validator"; do
+            echo "Probando $GO_PACKAGE..."
+            pushd src/$GO_PACKAGE
+            go test
+            popd
+          done
+      - name: Pruebas de C#
+        timeout-minutes: 10
+        run: dotnet test src/cartservice/
+
   deploy:
     name: "Desplegar en docker-desktop"
+    needs: pruebas
     runs-on: [self-hosted, order-tracking]
     environment: local-cluster
     timeout-minutes: 30        # build fria de referencia: 11m35s (paso 0)
