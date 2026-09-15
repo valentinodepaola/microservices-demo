@@ -1,20 +1,42 @@
 # El despliegue continuo
 
-Notas de cómo funciona `cd-main.yaml`: qué dispara el despliegue, qué hace la aprobación del Environment, cómo revierte solo, y qué revisar primero cuando algo falla.
+Notas de cómo funciona `cd-main.yaml`: qué dispara el despliegue, qué lo frena, qué hace la aprobación del Environment, cómo revierte solo, y qué revisar primero cuando algo falla.
 
-Montado el 1 de septiembre de 2026 · issue #18 · [ADR 0008](adr/0008-despliegue-continuo-en-dos-fases.md) · corre sobre la infraestructura de [runner-self-hosted.md](runner-self-hosted.md).
+Montado el 1 de septiembre de 2026 · issue #18 · [ADR 0008](adr/0008-despliegue-continuo-en-dos-fases.md) · corre sobre la infraestructura de [runner-self-hosted.md](runner-self-hosted.md). Pruebas antes del despliegue desde el issue #53.
 
 ## Qué lo dispara
 
 Cualquier `push` a `main` — en la práctica, cada PR que se integra. `paths-ignore` filtra cambios que solo tocan `**/*.md`, `docs/**` o `LICENSE`: un PR que solo actualiza documentación no dispara un despliegue completo de 12 servicios.
 
 ```
-merge a main → GitHub Actions → runner self-hosted (mac-valentino)
-             → skaffold run → clúster docker-desktop
-             → kubectl wait → smoke test → ✅  |  ❌ rollback automático
+merge a main → GitHub Actions → pruebas unitarias (ubuntu-24.04)
+                                  ❌ → despliegue omitido, el clúster se queda como estaba
+                                  ✅ → aprobación del Environment → runner self-hosted (mac-valentino)
+                                     → skaffold run → clúster docker-desktop
+                                     → kubectl wait → smoke test → ✅  |  ❌ rollback automático
 ```
 
-**Con la Mac apagada, el workflow no falla: espera en cola** hasta que el runner vuelva a estar en línea. Es el costo aceptado de la fase A — ver [runner-self-hosted.md](runner-self-hosted.md#con-qué-hay-que-contar).
+**Con la Mac apagada, el workflow no falla:** las pruebas corren en la nube y el despliegue **espera en cola** hasta que el runner vuelva a estar en línea. Es el costo aceptado de la fase A — ver [runner-self-hosted.md](runner-self-hosted.md#con-qué-hay-que-contar).
+
+## Las pruebas van primero
+
+El despliegue arranca **solo si pasan las pruebas unitarias del mismo commit**. Antes del issue #53, `ci-main.yaml` corría las pruebas y `cd-main.yaml` desplegaba al mismo tiempo, sin esperarse: una versión con pruebas rotas se desplegaba igual.
+
+Ahora las dos cosas viven en `cd-main.yaml`, como dos jobs unidos con `needs:`:
+
+| Job | Dónde corre | Qué hace |
+|---|---|---|
+| `pruebas` | `ubuntu-24.04`, en la nube | Pruebas de Go (`shippingservice`, `productcatalogservice`, `frontend/validator`) y `dotnet test src/cartservice/` |
+| `deploy` | `[self-hosted, order-tracking]`, la Mac | Todo lo demás: despliegue, espera, smoke test y rollback |
+
+**Si las pruebas fallan, `deploy` sale como omitido (*skipped*) y la aprobación del Environment no se llega a pedir.** GitHub evalúa la protección del Environment justo cuando el job va a arrancar, y un job omitido nunca arranca. Nadie tiene que acordarse de revisar las pruebas antes de aprobar.
+
+- **Las pruebas no corren en el runner.** No necesitan el clúster, y así no suman tiempo ni ejecutan código en la máquina del equipo.
+- **La lista de pruebas es la de `ci-pr.yaml`.** Lo que se exige para integrar un PR y lo que se exige para desplegar es lo mismo. Si se suma un servicio a una lista, hay que sumarlo a la otra.
+- **`ci-main.yaml` ya no se dispara con `main`**, solo con `release/*` y a mano. Así hay un solo lugar donde las pruebas deciden si se despliega. No se pierde cobertura: su `paths-ignore` es más amplio que el de `cd-main.yaml`, así que todo merge que lo disparaba también dispara este workflow.
+- **`concurrency: cd-main` cubre también las pruebas.** Si un despliegue anterior está esperando aprobación o a la Mac, las pruebas del merge siguiente esperan con él. GitHub deja una sola ejecución en espera por grupo: si llega una tercera, la que esperaba se cancela, y el merge más reciente prueba y despliega todo junto.
+
+**Por qué `needs:` y no encadenar dos workflows con `workflow_run`.** `workflow_run` arranca cuando el otro workflow termina, no cuando sale bien: la condición de éxito hay que agregarla a mano, y si falta, el problema sigue igual pero escondido. Además cambia el disparo de un workflow que usa el runner, y la [regla 1](runner-self-hosted.md#reglas-de-seguridad) solo admite `push` a `main` o `workflow_dispatch`. Y como `ci-main.yaml` ignora los cambios de `kustomize/`, `terraform/` y `helm-chart/`, esos merges se quedarían sin desplegar.
 
 ## Por qué no hay registro de imágenes
 
@@ -37,6 +59,8 @@ Esto es el nivel 2 de rollback, automático. Para los otros dos niveles (apagar 
 **La ejecución roja no se borra.** Es la evidencia de la métrica DORA de tiempo de restauración — el resumen del job (`$GITHUB_STEP_SUMMARY`) queda con la duración y si hizo falta rollback o no.
 
 ## Qué revisar primero cuando falla
+
+**Si `deploy` aparece omitido, no es la máquina: fallaron las pruebas.** El error está en el job `pruebas`, y el clúster sigue con la versión anterior. No hay nada que revertir.
 
 **Antes de sospechar del pipeline, correr [`runner-check.yaml`](../.github/workflows/runner-check.yaml):**
 
@@ -84,7 +108,7 @@ Dentro de AWS el clúster **no es EKS**: es **k3s sobre una instancia EC2 `x86_6
 
 **Por qué `x86_64` y no Graviton.** Las imágenes de Online Boutique no tienen variante ARM. Las instancias baratas de AWS sí lo son, y elegir una de esas deja los doce pods sin arrancar.
 
-Lo que **no** cambia, igual que predijo el ADR 0008: los pasos de espera, los smoke tests y el rollback. El profile `local-arm64` de `skaffold.yaml` queda inactivo por sí solo, porque se activa por `kubeContext: docker-desktop`.
+Lo que **no** cambia, igual que predijo el ADR 0008: el job `pruebas` —ya corre en `ubuntu-24.04`—, los pasos de espera, los smoke tests y el rollback. El profile `local-arm64` de `skaffold.yaml` queda inactivo por sí solo, porque se activa por `kubeContext: docker-desktop`.
 
 ### El entorno, verificado el 10 de septiembre de 2026
 

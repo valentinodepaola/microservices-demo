@@ -45,7 +45,7 @@ Aparte de eso, en Settings → Actions → General la aprobación de workflows d
 
 > Lo que no hay que hacer: agregarle un trigger de `pull_request` a un workflow del runner para probar más rápido. Eso tumba la regla 1, que es la que sostiene a las otras dos.
 
-Los workflows que sí corren con Pull Requests (`ci-pr.yaml`, `ci-main.yaml`) siguen en `ubuntu-24.04`, en la nube. No tocan esta máquina.
+Lo que no necesita el clúster corre en `ubuntu-24.04`, en la nube, y no toca esta máquina: `ci-pr.yaml` con cada Pull Request, `ci-main.yaml` en las ramas `release/*`, y el job `pruebas` de `cd-main.yaml`, que corre antes del despliegue. Dentro de `cd-main.yaml`, solo el job `deploy` usa el runner.
 
 ## Con qué hay que contar
 
