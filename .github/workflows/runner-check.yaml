@@ -72,6 +72,84 @@ jobs:
           docker version --format 'docker engine {{.Server.Version}}'
           skaffold version
 
+      - name: Verificar que Docker puede construir sin el llavero
+        # El runner arranca desde un LaunchAgent con SessionCreate, o sea una
+        # sesion de seguridad propia que no hereda el llavero del usuario. Si
+        # Docker pide credenciales de un registro, la construccion muere con
+        # "keychain cannot be accessed" — y eso no se nota hasta que un merge
+        # cambia codigo y obliga a construir de verdad. Issue #57.
+        #
+        # Este paso reproduce esa situacion en un minuto: monta el mismo
+        # DOCKER_CONFIG aislado que usa cd-main.yaml, pone un señuelo en el
+        # PATH para saber si alguien llama al helper de credenciales, y
+        # construye una imagen minima con la misma base que rompio el
+        # despliegue.
+        run: |
+          set -uo pipefail
+          DIAG="${RUNNER_TEMP}/diag-docker"
+          rm -rf "$DIAG"; mkdir -p "$DIAG/bin" "$DIAG/cfg" "$DIAG/ctx"
+
+          echo "== Sesion de seguridad =="
+          echo "HOME=$HOME"
+          security list-keychains 2>&1 | head -3
+          echo "-- ¿responde el llavero en esta sesion? --"
+          security find-generic-password -l __no_existe__ 2>&1 | head -2
+
+          echo ""
+          echo "== Helpers de credenciales visibles =="
+          ls -l /usr/local/bin/docker-credential-* 2>/dev/null || echo "ninguno en /usr/local/bin"
+
+          echo ""
+          echo "== Config de Docker del usuario =="
+          sed -n '1,20p' "$HOME/.docker/config.json" 2>/dev/null || echo "sin ~/.docker/config.json"
+
+          # Señuelo: registra cualquier invocacion y delega en el real.
+          for h in desktop osxkeychain; do
+            cat > "$DIAG/bin/docker-credential-$h" <<SH
+          #!/bin/sh
+          echo "INVOCADO: docker-credential-$h \$*" >> "$DIAG/invocaciones.log"
+          exec /usr/local/bin/docker-credential-$h "\$@"
+          SH
+            chmod +x "$DIAG/bin/docker-credential-$h"
+          done
+
+          export DOCKER_CONFIG="$DIAG/cfg"
+          export PATH="$DIAG/bin:$PATH"
+          echo '{"auths":{}}' > "$DOCKER_CONFIG/config.json"
+          ln -sfn "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
+
+          echo ""
+          echo "== Config efectiva del job =="
+          echo "DOCKER_CONFIG=$DOCKER_CONFIG"
+          cat "$DOCKER_CONFIG/config.json"
+          docker buildx version || echo "buildx NO disponible"
+          echo "-- builders --"
+          docker buildx ls 2>&1 | head -5
+
+          echo ""
+          echo "== Construccion de prueba, con la base que rompio el despliegue =="
+          printf 'FROM --platform=linux/arm64 golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2\nRUN true\n' > "$DIAG/ctx/Dockerfile"
+          docker buildx build --platform=linux/arm64 --pull --no-cache -q "$DIAG/ctx" 2>&1 | tail -15
+          RESULTADO=${PIPESTATUS[0]}
+
+          echo ""
+          echo "== ¿Alguien llamo al helper de credenciales? =="
+          if [ -f "$DIAG/invocaciones.log" ]; then
+            sort "$DIAG/invocaciones.log" | uniq -c
+            echo "^ el aislamiento de DOCKER_CONFIG NO esta evitando la llamada"
+          else
+            echo "nadie lo llamo — el aislamiento funciona"
+          fi
+
+          echo ""
+          if [ "$RESULTADO" -eq 0 ]; then
+            echo "RESULTADO: Docker puede construir en esta sesion."
+          else
+            echo "RESULTADO: Docker NO puede construir en esta sesion."
+            echo "Si el error menciona el llavero, es el issue #57."
+            exit 1
+          fi
+
       - name: Verificar el contexto de Kubernetes
         run: |
           set -euo pipefail
