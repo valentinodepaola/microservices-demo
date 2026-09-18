@@ -8,7 +8,7 @@ require (
 	cloud.google.com/go/profiler v0.6.0
 	github.com/sirupsen/logrus v1.9.4
 	golang.org/x/net v0.57.0
-	google.golang.org/grpc v1.83.0
+	google.golang.org/grpc v1.83.1
 	google.golang.org/protobuf v1.36.11
 )
 
