@@ -45,7 +45,9 @@ Aparte de eso, en Settings → Actions → General la aprobación de workflows d
 
 > Lo que no hay que hacer: agregarle un trigger de `pull_request` a un workflow del runner para probar más rápido. Eso tumba la regla 1, que es la que sostiene a las otras dos.
 
-Lo que no necesita el clúster corre en `ubuntu-24.04`, en la nube, y no toca esta máquina: `ci-pr.yaml` con cada Pull Request, `ci-main.yaml` en las ramas `release/*`, y el job `pruebas` de `cd-main.yaml`, que corre antes del despliegue. Dentro de `cd-main.yaml`, solo el job `deploy` usa el runner.
+Lo que no necesita el clúster corre en `ubuntu-24.04`, en la nube, y no toca esta máquina: `ci-pr.yaml` con cada Pull Request, `ci-main.yaml` en las ramas `release/*`, y los jobs `pruebas` e `imagenes` de `cd-main.yaml`, que corren antes del despliegue. Dentro de `cd-main.yaml`, solo el job `deploy` usa el runner.
+
+`imagenes` es además el único job que pide un permiso más amplio que `contents: read` — necesita `packages: write` para publicar en `ghcr.io`. Lo declara **a nivel de job**, así que la regla 3 sigue en pie para `deploy`, que es el que corre aquí.
 
 ## Con qué hay que contar
 

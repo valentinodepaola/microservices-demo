@@ -17,9 +17,16 @@ We also host a test GKE cluster, which is where the deploy tests run. Every PR h
 Go and C# unit tests run in three places:
 
 - `ci-pr.yaml` on every commit of every open PR: Go tests for `shippingservice`, `productcatalogservice` and `frontend/validator`, and C# tests for `cartservice`.
-- `cd-main.yaml` on every push to main, as the `pruebas` job, with the same list as `ci-pr.yaml`. The `deploy` job `needs:` it, so a commit with failing tests is never deployed. See [docs/despliegue-continuo.md](../../docs/despliegue-continuo.md#las-pruebas-van-primero).
+- `cd-main.yaml` on every push to main, as the `pruebas` job, with the same list as `ci-pr.yaml`. Both the `imagenes` and `deploy` jobs `needs:` it, so a commit with failing tests is never built or deployed. See [docs/despliegue-continuo.md](../../docs/despliegue-continuo.md#las-pruebas-van-primero).
 - `ci-main.yaml` on pushes to `release/*` branches, or when run manually. It does not run on main, so the tests that gate a deployment live in a single place.
 
+### Build and Publish Images - [cd-main.yaml](cd-main.yaml)
+
+The `imagenes` job, between `pruebas` and `deploy`. On every push to main it builds the twelve Skaffold artifacts and publishes them to `ghcr.io/valentinodepaola`, tagged with the commit SHA. It authenticates with the workflow's own `GITHUB_TOKEN` — there is no secret to manage.
+
+It runs on `ubuntu-24.04`, not on the self-hosted runner, and builds **`linux/amd64` only**: the runner is Apple Silicon (`arm64`) and the phase B cluster is an `x86_64` EC2 instance. `packages: write` is declared at the job level, so the `deploy` job keeps the workflow-wide `contents: read` that [ADR 0008](../../docs/adr/0008-despliegue-continuo-en-dos-fases.md) requires.
+
+The phase A deploy still builds its own images locally against Docker Desktop, so every merge builds twice. That ends when issue #37 repoints the deployment at the remote cluster. See [docs/despliegue-continuo.md](../../docs/despliegue-continuo.md#el-registro-de-imágenes-y-por-qué-el-despliegue-igual-construye-en-local).
 
 ### Deploy Tests- [ci-pr.yaml](ci-pr.yaml)
 

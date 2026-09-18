@@ -2,7 +2,7 @@
 
 Notas de cómo funciona `cd-main.yaml`: qué dispara el despliegue, qué lo frena, qué hace la aprobación del Environment, cómo revierte solo, y qué revisar primero cuando algo falla.
 
-Montado el 1 de septiembre de 2026 · issue #18 · [ADR 0008](adr/0008-despliegue-continuo-en-dos-fases.md) · corre sobre la infraestructura de [runner-self-hosted.md](runner-self-hosted.md). Pruebas antes del despliegue desde el issue #53.
+Montado el 1 de septiembre de 2026 · issue #18 · [ADR 0008](adr/0008-despliegue-continuo-en-dos-fases.md) · corre sobre la infraestructura de [runner-self-hosted.md](runner-self-hosted.md). Pruebas antes del despliegue desde el issue #53; imágenes publicadas en `ghcr.io` desde el #45.
 
 ## Qué lo dispara
 
@@ -11,9 +11,11 @@ Cualquier `push` a `main` — en la práctica, cada PR que se integra. `paths-ig
 ```
 merge a main → GitHub Actions → pruebas unitarias (ubuntu-24.04)
                                   ❌ → despliegue omitido, el clúster se queda como estaba
-                                  ✅ → aprobación del Environment → runner self-hosted (mac-valentino)
-                                     → skaffold run → clúster docker-desktop
-                                     → kubectl wait → smoke test → ✅  |  ❌ rollback automático
+                                  ✅ → construir y publicar en ghcr.io (ubuntu-24.04)
+                                       ❌ → despliegue omitido
+                                       ✅ → aprobación del Environment → runner self-hosted (mac-valentino)
+                                          → skaffold run → clúster docker-desktop
+                                          → kubectl wait → smoke test → ✅  |  ❌ rollback automático
 ```
 
 **Con la Mac apagada, el workflow no falla:** las pruebas corren en la nube y el despliegue **espera en cola** hasta que el runner vuelva a estar en línea. Es el costo aceptado de la fase A — ver [runner-self-hosted.md](runner-self-hosted.md#con-qué-hay-que-contar).
@@ -22,14 +24,15 @@ merge a main → GitHub Actions → pruebas unitarias (ubuntu-24.04)
 
 El despliegue arranca **solo si pasan las pruebas unitarias del mismo commit**. Antes del issue #53, `ci-main.yaml` corría las pruebas y `cd-main.yaml` desplegaba al mismo tiempo, sin esperarse: una versión con pruebas rotas se desplegaba igual.
 
-Ahora las dos cosas viven en `cd-main.yaml`, como dos jobs unidos con `needs:`:
+Ahora todo vive en `cd-main.yaml`, como tres jobs encadenados con `needs:`:
 
 | Job | Dónde corre | Qué hace |
 |---|---|---|
 | `pruebas` | `ubuntu-24.04`, en la nube | Pruebas de Go (`shippingservice`, `productcatalogservice`, `frontend/validator`) y `dotnet test src/cartservice/` |
+| `imagenes` | `ubuntu-24.04`, en la nube | Construye los doce artefactos de Skaffold para `linux/amd64` y los publica en `ghcr.io`, etiquetados con el SHA |
 | `deploy` | `[self-hosted, order-tracking]`, la Mac | Todo lo demás: despliegue, espera, smoke test y rollback |
 
-**Si las pruebas fallan, `deploy` sale como omitido (*skipped*) y la aprobación del Environment no se llega a pedir.** GitHub evalúa la protección del Environment justo cuando el job va a arrancar, y un job omitido nunca arranca. Nadie tiene que acordarse de revisar las pruebas antes de aprobar.
+**Si algo falla antes, `deploy` sale como omitido (*skipped*) y la aprobación del Environment no se llega a pedir.** GitHub evalúa la protección del Environment justo cuando el job va a arrancar, y un job omitido nunca arranca. Nadie tiene que acordarse de revisar las pruebas antes de aprobar.
 
 - **Las pruebas no corren en el runner.** No necesitan el clúster, y así no suman tiempo ni ejecutan código en la máquina del equipo.
 - **La lista de pruebas es la de `ci-pr.yaml`.** Lo que se exige para integrar un PR y lo que se exige para desplegar es lo mismo. Si se suma un servicio a una lista, hay que sumarlo a la otra.
@@ -38,9 +41,17 @@ Ahora las dos cosas viven en `cd-main.yaml`, como dos jobs unidos con `needs:`:
 
 **Por qué `needs:` y no encadenar dos workflows con `workflow_run`.** `workflow_run` arranca cuando el otro workflow termina, no cuando sale bien: la condición de éxito hay que agregarla a mano, y si falta, el problema sigue igual pero escondido. Además cambia el disparo de un workflow que usa el runner, y la [regla 1](runner-self-hosted.md#reglas-de-seguridad) solo admite `push` a `main` o `workflow_dispatch`. Y como `ci-main.yaml` ignora los cambios de `kustomize/`, `terraform/` y `helm-chart/`, esos merges se quedarían sin desplegar.
 
-## Por qué no hay registro de imágenes
+## El registro de imágenes, y por qué el despliegue igual construye en local
 
-Docker Desktop comparte su almacén de imágenes con el clúster de kubeadm, y Skaffold reconoce `docker-desktop` como clúster local: construye con el Docker local y se salta el `push`. Es lo contrario de lo que hace `ci-main.yaml`, que fuerza `skaffold config set --global local-cluster false` precisamente para empujar a GKE.
+Desde el issue #45, cada merge a `main` publica las doce imágenes en `ghcr.io/valentinodepaola`, etiquetadas con el SHA del commit. Lo hace el job `imagenes`, que se autentica con el `GITHUB_TOKEN` que el propio workflow ya recibe: no hay ningún secreto que administrar ni que rotar.
+
+**Construye para `linux/amd64` y nada más.** La Mac del runner es Apple Silicon (`arm64`) y el clúster de la fase B es una EC2 `x86_64` — una imagen construida en la Mac no arrancaría ahí. Construir además la variante `arm64` obligaría a emular con QEMU sobre un runner x86, y nadie usaría esa mitad. Por eso el job corre en `ubuntu-24.04` y no en el runner, y por eso pasa `--platform=linux/amd64` en vez de dejar que Skaffold use las dos plataformas que declara `skaffold.yaml`.
+
+**Y aun así el despliegue vuelve a construir.** Docker Desktop comparte su almacén de imágenes con el clúster, y Skaffold reconoce `docker-desktop` como clúster local: `skaffold run` construye con el Docker local, en `arm64`, y se salta el `push`. No baja nada del registro porque no lo necesita.
+
+Así que **cada merge construye dos veces**: una en Ubuntu para publicar, otra en la Mac para desplegar. Es deliberado, no un descuido — la fase A no necesita registro, y la fase B no puede prescindir de él. Termina cuando el issue #37 reapunte `cd-main.yaml` al clúster de k3s y el despliegue pase a bajar las imágenes en lugar de fabricarlas.
+
+**Los paquetes son públicos.** Nacen privados, y un k3s sin credenciales se queda en `ImagePullBackOff`. Se voltean a mano una sola vez, paquete por paquete; el repositorio ya es público, así que no expone nada nuevo. La alternativa era un `imagePullSecret` en el clúster, que son más piezas por mantener.
 
 ## La aprobación del Environment no contradice "sin intervención"
 
@@ -101,14 +112,14 @@ Dentro de AWS el clúster **no es EKS**: es **k3s sobre una instancia EC2 `x86_6
 | `runs-on` | `[self-hosted, order-tracking]` | `ubuntu-24.04` |
 | Clúster | `docker-desktop` | k3s sobre EC2 `x86_64` |
 | Contexto | `kubectl config use-context docker-desktop` | *kubeconfig* del k3s, desde los secretos del repositorio |
-| Registro | Ninguno | `ghcr.io`, con el `GITHUB_TOKEN` del propio workflow |
+| Registro | `ghcr.io` — se publica, pero el despliegue no baja de ahí | El mismo `ghcr.io`, y el despliegue sí baja de ahí |
 | Infraestructura | Ninguna | Terraform, con estado remoto en S3 |
 
 **Por qué `ghcr.io` y no ECR.** Las credenciales de AWS Academy rotan en cada sesión —clave, secreto y *session token*—, así que un secreto de GitHub Actions apuntando a ECR caduca cada pocas horas. `ghcr.io` se autentica con el token que el propio workflow ya recibe, y no hay nada que rotar.
 
 **Por qué `x86_64` y no Graviton.** Las imágenes de Online Boutique no tienen variante ARM. Las instancias baratas de AWS sí lo son, y elegir una de esas deja los doce pods sin arrancar.
 
-Lo que **no** cambia, igual que predijo el ADR 0008: el job `pruebas` —ya corre en `ubuntu-24.04`—, los pasos de espera, los smoke tests y el rollback. El profile `local-arm64` de `skaffold.yaml` queda inactivo por sí solo, porque se activa por `kubeContext: docker-desktop`.
+Lo que **no** cambia, igual que predijo el ADR 0008: los jobs `pruebas` e `imagenes` —ya corren en `ubuntu-24.04`—, los pasos de espera, los smoke tests y el rollback. El profile `local-arm64` de `skaffold.yaml` queda inactivo por sí solo, porque se activa por `kubeContext: docker-desktop`.
 
 ### El entorno, verificado el 10 de septiembre de 2026
 
