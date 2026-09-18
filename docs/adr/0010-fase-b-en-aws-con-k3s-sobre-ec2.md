@@ -23,8 +23,10 @@ Se suma una restricción de la propia rúbrica de la fase 2: la construcción de
 |---|---|---|
 | Runner | Self-hosted en la máquina del equipo | `ubuntu-24.04` |
 | Clúster | Docker Desktop local | k3s sobre EC2 `x86_64` |
-| Registro | Ninguno | GitHub Container Registry (`ghcr.io`) |
+| Registro | GitHub Container Registry (`ghcr.io`) — publica, pero el despliegue local no baja de ahí | El mismo `ghcr.io`, y el despliegue sí baja de ahí |
 | Infraestructura | Ninguna | Terraform, con estado remoto en S3 |
+
+> **Corregido el 17 de septiembre de 2026 (issue #45).** La fila del registro decía «Ninguno» para la fase A. Al construir y publicar las imágenes en CI —un criterio evaluado por sí solo en la fase 2— la fase A pasó a tener registro antes de que llegara la fase B. La decisión de este ADR no cambia; solo dejó de ser cierto el estado que la tabla describía.
 
 Tres precisiones que sostienen la decisión:
 

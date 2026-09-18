@@ -45,7 +45,9 @@ Aparte de eso, en Settings → Actions → General la aprobación de workflows d
 
 > Lo que no hay que hacer: agregarle un trigger de `pull_request` a un workflow del runner para probar más rápido. Eso tumba la regla 1, que es la que sostiene a las otras dos.
 
-Lo que no necesita el clúster corre en `ubuntu-24.04`, en la nube, y no toca esta máquina: `ci-pr.yaml` con cada Pull Request, `ci-main.yaml` en las ramas `release/*`, y el job `pruebas` de `cd-main.yaml`, que corre antes del despliegue. Dentro de `cd-main.yaml`, solo el job `deploy` usa el runner.
+Lo que no necesita el clúster corre en `ubuntu-24.04`, en la nube, y no toca esta máquina: `ci-pr.yaml` con cada Pull Request, `ci-main.yaml` en las ramas `release/*`, y los jobs `pruebas` e `imagenes` de `cd-main.yaml`, que corren antes del despliegue. Dentro de `cd-main.yaml`, solo el job `deploy` usa el runner.
+
+`imagenes` es además el único job que pide un permiso más amplio que `contents: read` — necesita `packages: write` para publicar en `ghcr.io`. Lo declara **a nivel de job**, así que la regla 3 sigue en pie para `deploy`, que es el que corre aquí.
 
 ## Con qué hay que contar
 
@@ -55,6 +57,33 @@ Las tres primeras se resumen en lo mismo: si esa Mac no está lista, no hay desp
 2. **Si el servicio se cae, no se levanta solo.** El `.plist` que genera GitHub no trae `KeepAlive`. Hay un supervisor interno que mantiene vivo al listener entre trabajos y cuando el runner se autoactualiza, pero si el servicio muere hay que arrancarlo a mano.
 3. **Docker Desktop tiene que estar corriendo.** El runner puede aparecer en línea y aun así fallar todo despliegue si el daemon está apagado.
 4. **Con la Mac apagada, un merge se queda encolado.** El workflow no falla: espera a que el runner vuelva. Es el costo de la fase A, y es justo lo que la fase B (GKE) elimina.
+5. **El llavero de macOS no está disponible para el runner.** Ver abajo.
+
+### El llavero, y por qué el job trae su propia config de Docker
+
+El `~/.docker/config.json` de esta Mac declara `"credsStore": "desktop"`. Cuando Docker construye una imagen, llama a ese *helper* para resolver credenciales del registro, y el helper lee del llavero `login.keychain-db`.
+
+**Ese llavero no se puede abrir desde el runner.** Arranca desde un LaunchAgent, que es una sesión sin interacción de usuario, y macOS no permite desbloquearlo ahí. Cualquier construcción que tenga que resolver credenciales muere con:
+
+```
+keychain cannot be accessed because the current session does not allow user interaction
+```
+
+Por eso el job `deploy` de `cd-main.yaml` declara su propio `DOCKER_CONFIG`, apuntando a un directorio del workspace con un `config.json` sin `credsStore`. Sin helper que llamar, no hay llavero que abrir. No se pierde nada: `auths` en la máquina está vacío y todas las imágenes base de los Dockerfiles viven en registros públicos.
+
+**Ese directorio necesita además un enlace a los plugins.** `DOCKER_CONFIG` no solo dice dónde viven las credenciales: es también donde el CLI de Docker busca sus *plugins*, en `$DOCKER_CONFIG/cli-plugins/`. Un directorio con solo un `config.json` deja a `docker-buildx` fuera del alcance, y como `skaffold.yaml` declara `useBuildkit: true`, la construcción muere con `BuildKit is enabled but the buildx component is missing`. El paso resuelve las dos cosas a la vez:
+
+```bash
+echo '{"auths":{}}' > "$DOCKER_CONFIG/config.json"
+ln -sfn "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
+docker buildx version
+```
+
+El `docker buildx version` del final está a propósito: si el enlace se rompe, el paso falla ahí con un mensaje claro en vez de hacerlo treinta segundos después dentro de Skaffold.
+
+**Esto tardó en aparecer.** Hasta el issue #57, ningún despliegue había construido una imagen: las doce salían siempre de caché, así que Docker nunca llegaba a pedir credenciales. El primer merge que cambió código fuente lo destapó. Si algún día alguien quita ese `DOCKER_CONFIG` por parecer redundante, el pipeline volverá a pasar en verde hasta el siguiente cambio de código real.
+
+> **No** lo arregles desbloqueando el llavero ni quitando `credsStore` del `config.json` de la máquina. Lo primero necesita la contraseña del usuario y se deshace en cada reinicio; lo segundo afecta al Docker interactivo, y Docker Desktop puede reescribir ese archivo por su cuenta.
 
 ## Operación
 

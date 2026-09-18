@@ -1,5 +1,7 @@
 # CD — despliega la tienda en el clúster local en cada integración a main.
-# Primero corren las pruebas unitarias; el despliegue arranca solo si pasan.
+# Tres jobs en cadena: primero corren las pruebas unitarias, después se
+# construyen y publican las imágenes en ghcr.io, y el despliegue arranca solo
+# si los dos pasaron.
 #
 # SEGURIDAD — mismas tres reglas no negociables del ADR 0008 (ver
 # docs/runner-self-hosted.md): solo `push` a main, environment con revisor
@@ -55,19 +57,112 @@ jobs:
         timeout-minutes: 10
         run: dotnet test src/cartservice/
 
+  # Construye las doce imagenes y las publica en ghcr.io etiquetadas con el
+  # commit. Va entre pruebas y deploy porque sin registro no hay fase B: el
+  # cluster remoto del issue #37 no puede leer del Docker local de nadie.
+  #
+  # Corre en ubuntu-24.04 y NO en el runner self-hosted: la Mac es arm64 y el
+  # cluster de la fase B es una EC2 x86_64. Ver ADR 0010.
+  imagenes:
+    name: "Construir y publicar imagenes"
+    needs: pruebas
+    runs-on: ubuntu-24.04
+    # packages: write va a nivel de job, no del workflow, para que deploy
+    # conserve el contents: read que exige la regla 3 del ADR 0008.
+    permissions:
+      contents: read
+      packages: write
+    timeout-minutes: 45        # build fria de referencia: 11m35s (paso 0)
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Instalar skaffold
+        run: |
+          curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
+          chmod +x skaffold
+          sudo mv skaffold /usr/local/bin
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Construir y publicar
+        # --platform fuerza una sola arquitectura. skaffold.yaml declara amd64
+        # y arm64; construir la mitad arm64 aqui saldria emulada con QEMU y no
+        # la usa nadie, porque el deploy se construye su propio arm64 abajo.
+        #
+        # --file-output todavia no hace falta, pero es lo que el issue #37 va a
+        # consumir con `skaffold deploy --build-artifacts` para desplegar sin
+        # reconstruir.
+        run: |
+          set -euo pipefail
+          skaffold build --push \
+            --platform=linux/amd64 \
+            --default-repo=ghcr.io/${{ github.repository_owner }} \
+            --tag=${{ github.sha }} \
+            --file-output=build.json
+
+      - name: Resumen
+        # success() y no always() como el resumen de deploy: si el build fallo,
+        # build.json no existe y no hay nada que listar.
+        if: success()
+        run: |
+          {
+            echo "## Imagenes publicadas en ghcr.io"
+            echo ""
+            echo "| Imagen | Tag |"
+            echo "|---|---|"
+            jq -r '.builds[] | "| \(.imageName) | `\(.tag)` |"' build.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
   deploy:
     name: "Desplegar en docker-desktop"
-    needs: pruebas
+    needs: [pruebas, imagenes]
     runs-on: [self-hosted, order-tracking]
     environment: local-cluster
     timeout-minutes: 30        # build fria de referencia: 11m35s (paso 0)
     env:
       CONTEXTO_ESPERADO: docker-desktop
+      # Docker config propia del job, aislada de la del usuario. Ver el paso
+      # "Aislar la configuracion de Docker" mas abajo (issue #57).
+      DOCKER_CONFIG: ${{ github.workspace }}/.docker-ci
     steps:
       - uses: actions/checkout@v7
 
       - name: Marcar el inicio
         run: echo "INICIO=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Aislar la configuracion de Docker
+        # El ~/.docker/config.json de la maquina declara credsStore "desktop",
+        # que resuelve credenciales contra el llavero de macOS. El runner
+        # arranca desde un LaunchAgent —sesion sin interaccion de usuario— y
+        # ahi el llavero no se puede desbloquear: cualquier build que tenga que
+        # resolver credenciales de un registro truena con "keychain cannot be
+        # accessed". No se notaba porque hasta el issue #57 ningun despliegue
+        # habia construido nada: las doce imagenes salian de cache.
+        #
+        # Con un config.json propio y sin credsStore, Docker no llama a ningun
+        # helper. No se pierde nada: "auths" en la maquina esta vacio y las
+        # imagenes base de los Dockerfiles estan todas en registros publicos.
+        #
+        # Vive en el workspace, no en $HOME, para no tocar la configuracion
+        # personal del usuario.
+        #
+        # OJO con el symlink: DOCKER_CONFIG no solo dice donde viven las
+        # credenciales, tambien es donde el CLI busca sus plugins, en
+        # $DOCKER_CONFIG/cli-plugins/. Sin el, docker-buildx desaparece y el
+        # build muere con "BuildKit is enabled but the buildx component is
+        # missing" — skaffold.yaml declara useBuildkit: true. Apunta al
+        # directorio del usuario y no a /Applications/Docker.app para no fijar
+        # una ruta de aplicacion aqui.
+        run: |
+          set -euo pipefail
+          mkdir -p "$DOCKER_CONFIG"
+          echo '{"auths":{}}' > "$DOCKER_CONFIG/config.json"
+          ln -sfn "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
+          docker buildx version
 
       - name: Apuntar al cluster correcto
         run: |
@@ -85,6 +180,11 @@ jobs:
         # cluster local solo. El fix real (cartservice truena bajo Rosetta
         # sin el) vive en el profile "local-arm64" de skaffold.yaml, que se
         # activa solo por kubeContext == docker-desktop. Ver paso 0.
+        #
+        # Reconstruye en local a proposito, en vez de bajar lo que publico el
+        # job imagenes: Docker Desktop comparte su almacen con el cluster, y
+        # esas imagenes son amd64. Cada merge construye dos veces hasta que el
+        # issue #37 reapunte el despliegue al cluster remoto.
         run: skaffold run --tag=${{ github.sha }}
 
       - name: Esperar a que los Deployments esten disponibles
