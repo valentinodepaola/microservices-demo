@@ -71,7 +71,9 @@ Esto es el nivel 2 de rollback, automático. Para los otros dos niveles (apagar 
 
 ## Qué revisar primero cuando falla
 
-**Si `deploy` aparece omitido, no es la máquina: fallaron las pruebas.** El error está en el job `pruebas`, y el clúster sigue con la versión anterior. No hay nada que revertir.
+**Si `deploy` aparece omitido, no es la máquina: falló algo antes.** El error está en `pruebas` o en `imagenes`, y el clúster sigue con la versión anterior. No hay nada que revertir.
+
+**Si `deploy` falla construyendo, con `error getting credentials` o algo sobre el llavero**, es el *credential helper* de Docker chocando con el LaunchAgent del runner. Está explicado en [runner-self-hosted.md](runner-self-hosted.md#el-llavero-y-por-qué-el-job-trae-su-propia-config-de-docker); el job ya trae su propio `DOCKER_CONFIG` para evitarlo, así que si vuelve a salir es que alguien lo quitó.
 
 **Antes de sospechar del pipeline, correr [`runner-check.yaml`](../.github/workflows/runner-check.yaml):**
 

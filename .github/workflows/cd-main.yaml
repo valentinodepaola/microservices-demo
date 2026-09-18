@@ -125,11 +125,34 @@ jobs:
     timeout-minutes: 30        # build fria de referencia: 11m35s (paso 0)
     env:
       CONTEXTO_ESPERADO: docker-desktop
+      # Docker config propia del job, aislada de la del usuario. Ver el paso
+      # "Aislar la configuracion de Docker" mas abajo (issue #57).
+      DOCKER_CONFIG: ${{ github.workspace }}/.docker-ci
     steps:
       - uses: actions/checkout@v7
 
       - name: Marcar el inicio
         run: echo "INICIO=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Aislar la configuracion de Docker
+        # El ~/.docker/config.json de la maquina declara credsStore "desktop",
+        # que resuelve credenciales contra el llavero de macOS. El runner
+        # arranca desde un LaunchAgent —sesion sin interaccion de usuario— y
+        # ahi el llavero no se puede desbloquear: cualquier build que tenga que
+        # resolver credenciales de un registro truena con "keychain cannot be
+        # accessed". No se notaba porque hasta el issue #57 ningun despliegue
+        # habia construido nada: las doce imagenes salian de cache.
+        #
+        # Con un config.json propio y sin credsStore, Docker no llama a ningun
+        # helper. No se pierde nada: "auths" en la maquina esta vacio y las
+        # imagenes base de los Dockerfiles estan todas en registros publicos.
+        #
+        # Vive en el workspace, no en $HOME, para no tocar la configuracion
+        # personal del usuario.
+        run: |
+          set -euo pipefail
+          mkdir -p "$DOCKER_CONFIG"
+          echo '{"auths":{}}' > "$DOCKER_CONFIG/config.json"
 
       - name: Apuntar al cluster correcto
         run: |
