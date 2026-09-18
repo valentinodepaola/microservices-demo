@@ -149,10 +149,20 @@ jobs:
         #
         # Vive en el workspace, no en $HOME, para no tocar la configuracion
         # personal del usuario.
+        #
+        # OJO con el symlink: DOCKER_CONFIG no solo dice donde viven las
+        # credenciales, tambien es donde el CLI busca sus plugins, en
+        # $DOCKER_CONFIG/cli-plugins/. Sin el, docker-buildx desaparece y el
+        # build muere con "BuildKit is enabled but the buildx component is
+        # missing" — skaffold.yaml declara useBuildkit: true. Apunta al
+        # directorio del usuario y no a /Applications/Docker.app para no fijar
+        # una ruta de aplicacion aqui.
         run: |
           set -euo pipefail
           mkdir -p "$DOCKER_CONFIG"
           echo '{"auths":{}}' > "$DOCKER_CONFIG/config.json"
+          ln -sfn "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
+          docker buildx version
 
       - name: Apuntar al cluster correcto
         run: |
