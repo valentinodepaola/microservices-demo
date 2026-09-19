@@ -76,6 +76,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Marcar el inicio
+        run: echo "INICIO_BUILD=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Instalar skaffold
         run: |
           curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
@@ -87,6 +90,27 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache de artefactos de skaffold
+        # Lo que se guarda NO son capas de Docker: esas no sobreviven en un
+        # runner de GitHub, que es desechable. Es el indice de skaffold, que
+        # asocia un hash de las entradas de cada artefacto con la imagen que
+        # produjo. Con ese indice, skaffold reconoce lo que no cambio y lo
+        # reetiqueta en el registro en vez de reconstruirlo.
+        #
+        # Sin esto, cada merge reconstruye los doce aunque no se haya tocado
+        # una linea de los servicios. Medido: 7m39s en 82d986f y 8m38s en
+        # af2941f, dos merges que solo cambiaron workflows y documentacion.
+        #
+        # run_id en la clave hace que cada ejecucion guarde una entrada nueva
+        # —una clave que ya existe no se sobrescribe— y restore-keys recupera
+        # la mas reciente del prefijo.
+        uses: actions/cache@v6
+        with:
+          path: ~/.skaffold/cache
+          key: skaffold-${{ runner.os }}-imagenes-${{ github.run_id }}
+          restore-keys: |
+            skaffold-${{ runner.os }}-imagenes-
 
       - name: Construir y publicar
         # --platform fuerza una sola arquitectura. skaffold.yaml declara amd64
@@ -109,8 +133,22 @@ jobs:
         # build.json no existe y no hay nada que listar.
         if: success()
         run: |
+          # La duracion es la medida del cuarto criterio del issue #45: con la
+          # cache tibia, un merge que no toca codigo de los servicios deberia
+          # bajar de los ~8 min que costaba reconstruirlos todos.
+          DURACION=$(( $(date +%s) - INICIO_BUILD ))
+          # build.json lista los doce siempre, construidos o solo reetiquetados
+          # — no sirve para saber cuantos se reconstruyeron. Va como conteo de
+          # lo publicado, que es lo que el criterio uno pide demostrar.
+          PUBLICADAS=$(jq -r '.builds | length' build.json)
           {
             echo "## Imagenes publicadas en ghcr.io"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Commit | \`${GITHUB_SHA:0:7}\` |"
+            echo "| Publicadas | ${PUBLICADAS} |"
+            echo "| Duracion | $((DURACION / 60))m $((DURACION % 60))s |"
             echo ""
             echo "| Imagen | Tag |"
             echo "|---|---|"

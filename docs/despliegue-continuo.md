@@ -51,7 +51,34 @@ Desde el issue #45, cada merge a `main` publica las doce imágenes en `ghcr.io/v
 
 Así que **cada merge construye dos veces**: una en Ubuntu para publicar, otra en la Mac para desplegar. Es deliberado, no un descuido — la fase A no necesita registro, y la fase B no puede prescindir de él. Termina cuando el issue #37 reapunte `cd-main.yaml` al clúster de k3s y el despliegue pase a bajar las imágenes en lugar de fabricarlas.
 
-**Los paquetes son públicos.** Nacen privados, y un k3s sin credenciales se queda en `ImagePullBackOff`. Se voltean a mano una sola vez, paquete por paquete; el repositorio ya es público, así que no expone nada nuevo. La alternativa era un `imagePullSecret` en el clúster, que son más piezas por mantener.
+**Los paquetes son públicos**, que es lo que la fase B necesita: un k3s sin credenciales se quedaría en `ImagePullBackOff`. La alternativa era un `imagePullSecret` en el clúster, que son más piezas por mantener.
+
+No hizo falta voltearlos a mano: nacieron públicos al publicarse con el `GITHUB_TOKEN` desde un repositorio que ya lo era. Comprobarlo no requiere credenciales — es la misma ruta que seguiría el clúster:
+
+```bash
+SHA=$(git rev-parse origin/main)
+T=$(curl -s "https://ghcr.io/token?scope=repository:valentinodepaola/frontend:pull&service=ghcr.io" | jq -r .token)
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $T" \
+  "https://ghcr.io/v2/valentinodepaola/frontend/manifests/$SHA"
+```
+
+`200` es público. `401` o `403` significa que hay que voltearlo en la configuración del paquete.
+
+## La caché de artefactos de Skaffold
+
+El runner de Ubuntu es desechable: GitHub entrega una máquina limpia, corre el job y la destruye. Sin nada que recuerde entre ejecuciones, Skaffold no puede saber qué ya construyó y reconstruye los doce servicios **aunque el merge no haya tocado una línea de ninguno**. Medido antes de la caché:
+
+| Merge | Qué cambió en el código | `imagenes` |
+|---|---|---|
+| `8c17d84` | los 4 servicios de Go | 9m12s |
+| `82d986f` | nada — workflows y documentación | 7m39s |
+| `af2941f` | nada — workflows y documentación | 8m38s |
+
+Lo que se guarda con `actions/cache` **no son capas de Docker** —esas no sobreviven al runner desechable— sino el índice de Skaffold en `~/.skaffold/cache`, que asocia un hash de las entradas de cada artefacto con la imagen que produjo. Con ese índice, Skaffold reconoce lo que no cambió y lo reetiqueta en el registro en vez de reconstruirlo.
+
+La clave lleva `github.run_id` porque una clave que ya existe no se sobrescribe: así cada ejecución guarda una entrada nueva, y `restore-keys` recupera la más reciente del prefijo.
+
+El resumen del job (`$GITHUB_STEP_SUMMARY`) registra la duración de cada ejecución, que es la evidencia del cuarto criterio del issue #45.
 
 ## La aprobación del Environment no contradice "sin intervención"
 
