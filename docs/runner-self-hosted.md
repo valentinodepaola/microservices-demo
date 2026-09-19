@@ -63,23 +63,48 @@ Las tres primeras se resumen en lo mismo: si esa Mac no está lista, no hay desp
 
 El `~/.docker/config.json` de esta Mac declara `"credsStore": "desktop"`. Cuando Docker construye una imagen, llama a ese *helper* para resolver credenciales del registro, y el helper lee del llavero `login.keychain-db`.
 
-**Ese llavero no se puede abrir desde el runner.** Arranca desde un LaunchAgent, que es una sesión sin interacción de usuario, y macOS no permite desbloquearlo ahí. Cualquier construcción que tenga que resolver credenciales muere con:
+**Ese llavero no se puede abrir desde el runner.** Su LaunchAgent declara `SessionCreate`, así que launchd le crea una **sesión de seguridad propia** que no hereda el llavero que desbloqueaste al iniciar sesión. Cualquier construcción que tenga que resolver credenciales muere con:
 
 ```
 keychain cannot be accessed because the current session does not allow user interaction
 ```
 
-Por eso el job `deploy` de `cd-main.yaml` declara su propio `DOCKER_CONFIG`, apuntando a un directorio del workspace con un `config.json` sin `credsStore`. Sin helper que llamar, no hay llavero que abrir. No se pierde nada: `auths` en la máquina está vacío y todas las imágenes base de los Dockerfiles viven en registros públicos.
+### Quitar `credsStore` no basta
 
-**Ese directorio necesita además un enlace a los plugins.** `DOCKER_CONFIG` no solo dice dónde viven las credenciales: es también donde el CLI de Docker busca sus *plugins*, en `$DOCKER_CONFIG/cli-plugins/`. Un directorio con solo un `config.json` deja a `docker-buildx` fuera del alcance, y como `skaffold.yaml` declara `useBuildkit: true`, la construcción muere con `BuildKit is enabled but the buildx component is missing`. El paso resuelve las dos cosas a la vez:
+Es la trampa de este problema, y costó dos intentos fallidos. Sin `credsStore`, Docker en macOS **cae en su helper por defecto, que es `osxkeychain`** — el mismo llavero. Medido sobre esta máquina, con un señuelo en el `PATH` que registra quién llama a quién:
+
+| `config.json` | Helper que se invoca |
+|---|---|
+| `{"auths":{}}` | `osxkeychain` |
+| `{"auths":{},"credsStore":""}` | `osxkeychain` |
+| `{"auths":{},"credsStore":"noop"}` | `noop` |
+
+La única forma de sacar al llavero del camino es **darle a Docker un helper propio** que devuelva credenciales vacías. Por eso el paso `Aislar la configuracion de Docker` de `cd-main.yaml` escribe uno:
 
 ```bash
-echo '{"auths":{}}' > "$DOCKER_CONFIG/config.json"
+mkdir -p "$DOCKER_CONFIG/bin"
+cat > "$DOCKER_CONFIG/bin/docker-credential-noop" <<'HELPER'
+#!/bin/sh
+[ "$1" = "get" ] && { cat >/dev/null; echo '{"Username":"","Secret":""}'; }
+exit 0
+HELPER
+chmod +x "$DOCKER_CONFIG/bin/docker-credential-noop"
+printf '{"auths":{},"credsStore":"noop"}\n' > "$DOCKER_CONFIG/config.json"
 ln -sfn "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
-docker buildx version
+echo "$DOCKER_CONFIG/bin" >> "$GITHUB_PATH"
 ```
 
-El `docker buildx version` del final está a propósito: si el enlace se rompe, el paso falla ahí con un mensaje claro en vez de hacerlo treinta segundos después dentro de Skaffold.
+No se pierde nada: `auths` en la máquina está vacío y todas las imágenes base de los Dockerfiles viven en registros públicos, así que credenciales vacías sirven igual.
+
+### Y el enlace a los plugins
+
+`DOCKER_CONFIG` no solo dice dónde viven las credenciales: es también donde el CLI busca sus *plugins*, en `$DOCKER_CONFIG/cli-plugins/`. Un directorio sin ese enlace deja a `docker-buildx` fuera del alcance, y como `skaffold.yaml` declara `useBuildkit: true`, la construcción muere con `BuildKit is enabled but the buildx component is missing`.
+
+El `docker buildx version` al final del paso está a propósito: si el enlace se rompe, falla ahí con un mensaje claro en vez de hacerlo treinta segundos después dentro de Skaffold.
+
+### Cómo comprobarlo sin desplegar
+
+[`runner-check.yaml`](../.github/workflows/runner-check.yaml) trae un paso que reproduce todo esto en un minuto: monta el mismo `DOCKER_CONFIG`, pone señuelos sobre los dos helpers del llavero y construye una imagen mínima con la misma base que rompió el despliegue. Dice en su salida si alguien llamó al llavero.
 
 **Esto tardó en aparecer.** Hasta el issue #57, ningún despliegue había construido una imagen: las doce salían siempre de caché, así que Docker nunca llegaba a pedir credenciales. El primer merge que cambió código fuente lo destapó. Si algún día alguien quita ese `DOCKER_CONFIG` por parecer redundante, el pipeline volverá a pasar en verde hasta el siguiente cambio de código real.
 

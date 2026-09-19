@@ -135,34 +135,52 @@ jobs:
         run: echo "INICIO=$(date +%s)" >> "$GITHUB_ENV"
 
       - name: Aislar la configuracion de Docker
-        # El ~/.docker/config.json de la maquina declara credsStore "desktop",
-        # que resuelve credenciales contra el llavero de macOS. El runner
-        # arranca desde un LaunchAgent —sesion sin interaccion de usuario— y
-        # ahi el llavero no se puede desbloquear: cualquier build que tenga que
-        # resolver credenciales de un registro truena con "keychain cannot be
-        # accessed". No se notaba porque hasta el issue #57 ningun despliegue
-        # habia construido nada: las doce imagenes salian de cache.
+        # El runner arranca desde un LaunchAgent con SessionCreate, o sea una
+        # sesion de seguridad propia que no hereda el llavero del usuario. Si
+        # Docker pide credenciales de un registro, la construccion muere con
+        # "keychain cannot be accessed". No se notaba porque hasta el issue #57
+        # ningun despliegue habia construido nada: las doce imagenes salian de
+        # cache, y sin construir no hay credenciales que pedir.
         #
-        # Con un config.json propio y sin credsStore, Docker no llama a ningun
-        # helper. No se pierde nada: "auths" en la maquina esta vacio y las
-        # imagenes base de los Dockerfiles estan todas en registros publicos.
+        # OJO — QUITAR credsStore NO BASTA. Sin el, Docker en macOS cae en su
+        # helper por defecto, que es osxkeychain: el mismo llavero. Medido con
+        # un señuelo en el PATH sobre esta misma maquina:
         #
-        # Vive en el workspace, no en $HOME, para no tocar la configuracion
-        # personal del usuario.
+        #   {"auths":{}}                     -> llama a osxkeychain
+        #   {"auths":{},"credsStore":""}     -> llama a osxkeychain
+        #   {"auths":{},"credsStore":"noop"} -> llama a noop
         #
-        # OJO con el symlink: DOCKER_CONFIG no solo dice donde viven las
-        # credenciales, tambien es donde el CLI busca sus plugins, en
-        # $DOCKER_CONFIG/cli-plugins/. Sin el, docker-buildx desaparece y el
+        # La unica forma de sacar al llavero del camino es darle a Docker un
+        # helper propio que devuelva credenciales vacias. No se pierde nada:
+        # "auths" en la maquina esta vacio y las imagenes base de los
+        # Dockerfiles viven todas en registros publicos.
+        #
+        # El symlink de cli-plugins es aparte: DOCKER_CONFIG tambien es donde
+        # el CLI busca sus plugins, y sin el docker-buildx desaparece y el
         # build muere con "BuildKit is enabled but the buildx component is
-        # missing" — skaffold.yaml declara useBuildkit: true. Apunta al
-        # directorio del usuario y no a /Applications/Docker.app para no fijar
-        # una ruta de aplicacion aqui.
+        # missing" — skaffold.yaml declara useBuildkit: true.
+        #
+        # Todo vive en el workspace, no en $HOME, para no tocar la
+        # configuracion personal del usuario.
         run: |
           set -euo pipefail
-          mkdir -p "$DOCKER_CONFIG"
-          echo '{"auths":{}}' > "$DOCKER_CONFIG/config.json"
+          mkdir -p "$DOCKER_CONFIG/bin"
+
+          cat > "$DOCKER_CONFIG/bin/docker-credential-noop" <<'HELPER'
+          #!/bin/sh
+          # Credenciales vacias para cualquier registro. Existe solo para que
+          # Docker no caiga en osxkeychain. Ver issue #57.
+          [ "$1" = "get" ] && { cat >/dev/null; echo '{"Username":"","Secret":""}'; }
+          exit 0
+          HELPER
+          chmod +x "$DOCKER_CONFIG/bin/docker-credential-noop"
+
+          printf '{"auths":{},"credsStore":"noop"}\n' > "$DOCKER_CONFIG/config.json"
           ln -sfn "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
-          docker buildx version
+          echo "$DOCKER_CONFIG/bin" >> "$GITHUB_PATH"
+
+          PATH="$DOCKER_CONFIG/bin:$PATH" docker buildx version
+          PATH="$DOCKER_CONFIG/bin:$PATH" command -v docker-credential-noop
 
       - name: Apuntar al cluster correcto
         run: |
