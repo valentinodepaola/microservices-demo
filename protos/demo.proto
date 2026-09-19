@@ -260,3 +260,50 @@ message Ad {
     // short advertisement text to display.
     string text = 2;
 }
+
+// -------------Order service-----------------
+
+service OrderService {
+    rpc RecordOrder(RecordOrderRequest) returns (RecordOrderResponse) {}
+    rpc GetOrderByTrackingId(GetOrderByTrackingIdRequest) returns (TrackedOrder) {}
+}
+
+// Estado del pedido. No se almacena: orderservice lo calcula al consultar.
+// El catálogo de valores lo define #21. En proto3 el 0 es el default implícito.
+enum OrderStatus {
+    ORDER_STATUS_UNSPECIFIED = 0;
+}
+
+// Pedido completo, tal como lo guarda orderservice.
+message Order {
+    string order_id = 1;
+    // Sin formato fijo: lo genera shippingservice (ver tracker.go).
+    string shipping_tracking_id = 2;
+    Money shipping_cost = 3;
+    Address shipping_address = 4;
+    repeated OrderItem items = 5;
+    // Segundos Unix en UTC.
+    int64 purchased_at_unix = 6;
+    Money total = 7;
+}
+
+message RecordOrderRequest {
+    Order order = 1;
+}
+
+message RecordOrderResponse {
+    string order_id = 1;
+}
+
+message GetOrderByTrackingIdRequest {
+    string tracking_id = 1;
+}
+
+// Vista pública de la consulta: sin dirección de envío (ADR 0009, #11).
+message TrackedOrder {
+    string shipping_tracking_id = 1;
+    OrderStatus status = 2;
+    repeated OrderItem items = 3;
+    int64 purchased_at_unix = 4;
+    Money total = 5;
+}
