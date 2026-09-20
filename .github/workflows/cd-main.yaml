@@ -334,10 +334,20 @@ jobs:
 
       - name: Rollback automatico
         id: rollback
-        # Solo si el despliegue si llego a aplicarse: si `skaffold deploy` fallo
-        # antes de tocar el cluster, no hay nada que revertir y un undo aqui
-        # tumbaria la version que esta sana.
-        if: failure() && steps.deploy.outcome == 'success'
+        # Corre si el paso Desplegar llego a EJECUTARSE, salga bien o mal.
+        #
+        # Antes la condicion era `steps.deploy.outcome == 'success'`, con el
+        # razonamiento de que un skaffold que fallo no toco el cluster. Eso es
+        # falso: `skaffold deploy` APLICA primero y ESPERA despues. En el
+        # despliegue del merge del PR #62 aplico once Deployments y recien
+        # entonces murio esperando al doceavo — y el rollback no corrio,
+        # porque su condicion asumia que un fallo significaba no haber
+        # aplicado nada.
+        #
+        # != 'skipped' es lo que distingue los dos casos de verdad: si el
+        # preflight fallo porque el cluster no responde, este paso queda
+        # skipped y no se intenta revertir nada contra una instancia apagada.
+        if: failure() && steps.deploy.outcome != 'skipped'
         run: |
           # redis-cart queda fuera a proposito: usa redis:alpine, imagen fija,
           # no genera revision nueva en cada despliegue.
