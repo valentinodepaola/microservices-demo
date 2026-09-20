@@ -2,6 +2,8 @@
 
 Módulo de Terraform que crea el clúster de Kubernetes donde se despliega Online Boutique en la fase B del despliegue continuo, según el [ADR 0010](../../docs/adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md).
 
+> **Para el día a día —encender, apagar, renovar las llaves— usar [`docs/operar-el-cluster-de-aws.md`](../../docs/operar-el-cluster-de-aws.md).** Esta página explica qué crea el módulo y por qué; aquella dice qué comando correr y cuándo.
+
 **Este módulo crea la infraestructura; no despliega la aplicación.** Terraform levanta el clúster vacío y produce el *kubeconfig*; quien despliega la tienda dentro es [`cd-main.yaml`](../../.github/workflows/cd-main.yaml). Esa separación es deliberada: el módulo heredado de Google, conservado en [`../gcp-heredado/`](../gcp-heredado/), mezclaba las dos cosas en un mismo `apply`, y con ello ni la infraestructura ni el despliegue se distinguían como piezas propias.
 
 ## Qué crea
@@ -26,6 +28,19 @@ La AMI no está fijada por identificador: se resuelve con un `data source` filtr
 - Credenciales vigentes del laboratorio de AWS Academy en `~/.aws/credentials`
 
 > Las credenciales del laboratorio son temporales y **caducan al cerrar la sesión**. Cuando un comando responda `ExpiredToken`, hay que pulsar *Start Lab* y volver a pegarlas desde *AWS Details → AWS CLI*, reemplazando el archivo completo: si quedan dos bloques `[default]`, el CLI lee el primero, que es el caducado.
+
+## Revisar que el lab este levantado
+
+```bash
+aws sts get-caller-identity
+```
+
+Si te dice que no se identifica entonces levanta el lab, vete a la parte de AWS Details y pega la llave con este comando 
+
+```bash
+open -a TextEdit ~/.aws/credentials
+```
+Este comando abrira la ventana con la llave, borra y pega la nueva y guardala con command S
 
 ## Preparación, por única vez: el bucket del estado
 

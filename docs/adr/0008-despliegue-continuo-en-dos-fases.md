@@ -1,8 +1,12 @@
 # ADR 0008 — Despliegue continuo en dos fases sobre el mismo workflow
 
-**Estado:** Aceptada · 2026-08-27 · su **fase B** quedó reemplazada por el [ADR 0010](0010-fase-b-en-aws-con-k3s-sobre-ec2.md) · 2026-09-10
+**Estado:** Aceptada · 2026-08-27 · su **fase B** quedó reemplazada por el [ADR 0010](0010-fase-b-en-aws-con-k3s-sobre-ec2.md) · 2026-09-10 · **fase B en operación desde 2026-09-20**
 
-> El diseño en dos fases sobre un mismo workflow sigue vigente, y la fase A sigue en operación. Lo único que este ADR ya no describe es **el destino de la fase B**: donde dice GKE, Artifact Registry y nodo *spot*, hoy hay que leer AWS, `ghcr.io` y k3s sobre EC2. Ver el ADR 0010.
+> El diseño en dos fases sobre un mismo workflow sigue vigente. Lo que este ADR ya no describe es **el destino de la fase B**: donde dice GKE, Artifact Registry y nodo *spot*, hoy hay que leer AWS, `ghcr.io` y k3s sobre EC2. Ver el ADR 0010.
+>
+> **La fase A dejó de operar el 20 de septiembre de 2026** (issue #37): el job `deploy` de `cd-main.yaml` se mudó del runner self-hosted a `ubuntu-24.04` y del clúster de Docker Desktop al k3s sobre EC2. El runner y [runner-self-hosted.md](../runner-self-hosted.md) se conservan como registro.
+>
+> **La apuesta de este ADR se cobró.** Sostenía que construir el pipeline contra un clúster local y después reapuntarlo sería cambiar configuración y no reescribirlo. El cambio fueron 121 líneas agregadas —más de la mitad comentarios— y 71 borradas, y los pasos de espera, los dos smoke tests y el rollback quedaron **idénticos carácter por carácter** pese a cambiar de proveedor de nube. Ver [despliegue-continuo.md](../despliegue-continuo.md).
 
 ## Contexto
 
