@@ -117,9 +117,13 @@ Con eso, el criterio de aceptación del issue #37 —«un merge despliega sin qu
 
 ## El rollback
 
-Si `kubectl wait` o el smoke test fallan **después** de que `skaffold run` se aplicó, el workflow revierte automáticamente con `kubectl rollout undo` sobre los servicios que se reconstruyen en cada despliegue.
+Si el despliegue falla **después** de haberse aplicado, el workflow revierte automáticamente con `kubectl rollout undo` sobre los servicios que cambian de imagen en cada despliegue.
 
-**`redis-cart` queda afuera a propósito.** Usa la imagen fija `redis:alpine`, no `--tag=$GITHUB_SHA`, así que nunca genera una revisión nueva — hacerle `rollout undo` la mandaría a una revisión vieja arbitraria o fallaría por falta de historial.
+La condición es `failure() && steps.deploy.outcome != 'skipped'`, y ese `!= 'skipped'` tiene historia. Al principio decía `== 'success'`, razonando que un `skaffold` que falló no llegó a tocar el clúster. **Es falso: `skaffold deploy` aplica primero y espera después.** En el despliegue del merge del PR #62 aplicó once Deployments y recién entonces murió esperando al doceavo — y el rollback no corrió, porque su condición daba por sentado que fallar significaba no haber aplicado.
+
+`!= 'skipped'` distingue los dos casos que sí son distintos: si el preflight falló porque el clúster no responde, el paso queda omitido y no se intenta revertir nada contra una instancia apagada.
+
+**`redis-cart` queda afuera a propósito.** Usa la imagen fija `redis:alpine`, no una etiquetada con el commit, así que nunca genera una revisión nueva — hacerle `rollout undo` la mandaría a una revisión vieja arbitraria o fallaría por falta de historial.
 
 Esto es el nivel 2 de rollback, automático. Para los otros dos niveles (apagar el feature con un kill switch, o volver a la revisión anterior a mano) ver el documento de estrategia de rollback del proyecto.
 
@@ -144,7 +148,9 @@ El paso 3 no es opcional aunque la IP no haya cambiado: al recrear la instancia,
 
 **Si `deploy` aparece omitido, falló algo antes.** El error está en `pruebas` o en `imagenes`, y el clúster sigue con la versión anterior. No hay nada que revertir.
 
-**Si algún pod queda en `Pending` con `Insufficient cpu`**, es el techo de 2 vCPU del laboratorio. Los `requests` de los doce servicios suman 1570m y el nodo deja 1800m libres después de k3s: entra, pero con 230m de margen. Cualquier servicio nuevo —`orderservice`, `redis-orders`, Jaeger— consume ese margen. Las palancas, en orden: recortar `requests` de los servicios menos exigentes y, como último recurso, desplegar sin `loadgenerator` — que rompe los dos smoke tests.
+**Si `loadgenerator` queda en `Pending` con `Insufficient cpu`**, revisar que su Deployment conserve `maxSurge: 0`. Un rolling update normal crea el pod nuevo antes de matar al viejo, y `loadgenerator` pide 300m — más que los 230m de margen que deja la tienda desplegada, así que **no cabe al lado de sí mismo**. Pasó en el merge del PR #62, con los otros once Deployments ya actualizados. El porqué está comentado en `kubernetes-manifests/loadgenerator.yaml`.
+
+**Si es otro pod el que queda en `Pending` con `Insufficient cpu`**, es el techo de 2 vCPU del laboratorio. Los `requests` de los doce servicios suman 1570m y el nodo deja 1800m libres después de k3s: entra, pero con 230m de margen. Cualquier servicio nuevo —`orderservice`, `redis-orders`, Jaeger— consume ese margen. Las palancas, en orden: recortar `requests` de los servicios menos exigentes y, como último recurso, desplegar sin `loadgenerator` — que rompe los dos smoke tests.
 
 **Si `emailservice` o `recommendationservice` reinician una vez al arrancar, es esperable.** Los doce pods arrancan a la vez sobre 2 vCPU, la CPU queda contendida, y un `timeoutSeconds: 1` en el probe gRPC declara muerto a un proceso que solo estaba lento — `exitCode=137`, o sea SIGKILL del kubelet. Al reiniciar, los demás ya arrancaron y levanta al primer intento. Medido el 20/09/2026: los doce estables en 50 segundos y el smoke test en 190 peticiones con 0 errores. Los probes viven en `kubernetes-manifests/`, que es el entregable compartido, así que **no se ajustan** para acomodar una limitación del laboratorio.
 
