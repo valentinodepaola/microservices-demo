@@ -2,6 +2,8 @@
 
 Módulo de Terraform que crea el clúster de Kubernetes donde se despliega Online Boutique en la fase B del despliegue continuo, según el [ADR 0010](../../docs/adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md).
 
+> **Para el día a día —encender, apagar, renovar las llaves— usar [`docs/operar-el-cluster-de-aws.md`](../../docs/operar-el-cluster-de-aws.md).** Esta página explica qué crea el módulo y por qué; aquella dice qué comando correr y cuándo.
+
 **Este módulo crea la infraestructura; no despliega la aplicación.** Terraform levanta el clúster vacío y produce el *kubeconfig*; quien despliega la tienda dentro es [`cd-main.yaml`](../../.github/workflows/cd-main.yaml). Esa separación es deliberada: el módulo heredado de Google, conservado en [`../gcp-heredado/`](../gcp-heredado/), mezclaba las dos cosas en un mismo `apply`, y con ello ni la infraestructura ni el despliegue se distinguían como piezas propias.
 
 ## Qué crea
