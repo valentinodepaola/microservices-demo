@@ -22,6 +22,30 @@ spec:
     matchLabels:
       app: loadgenerator
   replicas: 1
+  # El pod viejo muere ANTES de que nazca el nuevo, en vez de solaparse.
+  #
+  # Por defecto un rolling update usa maxSurge 25%, que con una sola replica
+  # redondea a un pod extra: Kubernetes crea el nuevo y recien cuando esta
+  # listo mata al viejo, para que no haya hueco de servicio. Eso exige que los
+  # dos quepan a la vez, y loadgenerator pide 300m de CPU — el mas goloso de
+  # los doce. En el nodo de la fase B (m5.large, 2 vCPU, techo del laboratorio
+  # de AWS Academy) quedan 230m libres con la tienda desplegada, asi que el
+  # pod nuevo se queda Pending para siempre y el viejo no muere nunca.
+  #
+  # Medido en el despliegue del merge del PR #62: once Deployments pasaron
+  # —piden entre 100m y 200m, que si entran en 230m— y solo este fallo, con
+  # "0/1 nodes are available: 1 Insufficient cpu" despues de diez minutos.
+  #
+  # Con maxSurge 0 no hace falta margen: el reemplazo es en el mismo lugar.
+  # Se hace solo aqui y no en los doce porque este es el unico servicio que
+  # se pasa del margen, y porque es el unico donde la indisponibilidad no
+  # importa: genera trafico sintetico, no lo consume nadie. El frontend
+  # conserva su despliegue sin hueco.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   template:
     metadata:
       labels:
