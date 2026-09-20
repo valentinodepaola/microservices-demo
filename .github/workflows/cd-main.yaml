@@ -1,11 +1,16 @@
-# CD — despliega la tienda en el clúster local en cada integración a main.
-# Tres jobs en cadena: primero corren las pruebas unitarias, después se
-# construyen y publican las imágenes en ghcr.io, y el despliegue arranca solo
-# si los dos pasaron.
+# CD — despliega la tienda en el clúster de k3s sobre EC2 en cada integración
+# a main. Tres jobs en cadena: primero corren las pruebas unitarias, después
+# se construyen y publican las imágenes en ghcr.io, y el despliegue arranca
+# solo si los dos pasaron. Los tres corren en máquinas de GitHub, así que un
+# merge despliega sin que nadie encienda ni apruebe nada.
 #
-# SEGURIDAD — mismas tres reglas no negociables del ADR 0008 (ver
-# docs/runner-self-hosted.md): solo `push` a main, environment con revisor
-# requerido, y permissions: contents: read.
+# Fase B del ADR 0008, con el destino que fijó el ADR 0010 — issue #37.
+# Ver docs/despliegue-continuo.md.
+#
+# SEGURIDAD — las tres reglas del ADR 0008 siguen en pie, aunque una cambió de
+# motivo: solo `push` a main (regla 1, que ahora protege el secreto del
+# kubeconfig y no el runner), environment declarado (regla 2, sin revisor: ver
+# el comentario del job deploy), y permissions: contents: read (regla 3).
 
 name: "CD - Desplegar en cada merge a main"
 
@@ -58,11 +63,12 @@ jobs:
         run: dotnet test src/cartservice/
 
   # Construye las doce imagenes y las publica en ghcr.io etiquetadas con el
-  # commit. Va entre pruebas y deploy porque sin registro no hay fase B: el
-  # cluster remoto del issue #37 no puede leer del Docker local de nadie.
+  # commit. Va entre pruebas y deploy porque sin registro no hay despliegue:
+  # el cluster remoto no comparte almacen de imagenes con nadie, asi que la
+  # unica forma que tiene de conseguirlas es bajarlas de ahi.
   #
-  # Corre en ubuntu-24.04 y NO en el runner self-hosted: la Mac es arm64 y el
-  # cluster de la fase B es una EC2 x86_64. Ver ADR 0010.
+  # Construye para linux/amd64 y nada mas porque el nodo es una EC2 x86_64.
+  # Ver ADR 0010.
   imagenes:
     name: "Construir y publicar imagenes"
     needs: pruebas
@@ -115,11 +121,11 @@ jobs:
       - name: Construir y publicar
         # --platform fuerza una sola arquitectura. skaffold.yaml declara amd64
         # y arm64; construir la mitad arm64 aqui saldria emulada con QEMU y no
-        # la usa nadie, porque el deploy se construye su propio arm64 abajo.
+        # la usaria nadie: el nodo de k3s es x86_64.
         #
-        # --file-output todavia no hace falta, pero es lo que el issue #37 va a
-        # consumir con `skaffold deploy --build-artifacts` para desplegar sin
-        # reconstruir.
+        # --file-output escribe build.json, el indice de que imagen le toca a
+        # cada servicio. Es lo que el job deploy consume con
+        # `skaffold deploy --build-artifacts` para aplicar sin reconstruir.
         run: |
           set -euo pipefail
           skaffold build --push \
@@ -155,93 +161,125 @@ jobs:
             jq -r '.builds[] | "| \(.imageName) | `\(.tag)` |"' build.json
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Publicar el indice de lo construido
+        # El puente entre este job y deploy. build.json lista los doce
+        # artefactos con su tag en ghcr.io, y es lo que deploy consume con
+        # `skaffold deploy --build-artifacts` para aplicar sin reconstruir.
+        #
+        # Hace falta subirlo porque cada job corre en una maquina virtual
+        # propia que GitHub destruye al terminar: el archivo se escribe en una
+        # maquina que deja de existir antes de que deploy arranque. Mismo
+        # mecanismo que ci-pr.yaml usa para pasar el numero del PR.
+        #
+        # success() por lo mismo que el resumen de arriba: si el build fallo,
+        # build.json no existe y el paso moriria por un archivo ausente en vez
+        # de por la causa real.
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: build.json
+          # Solo tiene que sobrevivir de un job al siguiente. El default son
+          # 90 dias y llenaria la cuota del repositorio sin motivo.
+          retention-days: 1
+
   deploy:
-    name: "Desplegar en docker-desktop"
+    name: "Desplegar en k3s sobre EC2"
     needs: [pruebas, imagenes]
-    runs-on: [self-hosted, order-tracking]
-    environment: local-cluster
-    timeout-minutes: 30        # build fria de referencia: 11m35s (paso 0)
-    env:
-      CONTEXTO_ESPERADO: docker-desktop
-      # Docker config propia del job, aislada de la del usuario. Ver el paso
-      # "Aislar la configuracion de Docker" mas abajo (issue #57).
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-ci
+    # Fase B (issue #37): el job se muda del runner self-hosted a una maquina
+    # de GitHub. La fase A no se borra —el runner y runner-check.yaml siguen
+    # siendo validos y son el registro de como se llego hasta aca— pero el
+    # despliegue ya no depende de que una Mac este encendida.
+    runs-on: ubuntu-24.04
+    # Environment nuevo, SIN revisor requerido. El de la fase A lo exigia por
+    # la regla 2 del ADR 0008: el runner corria en una maquina del equipo, sin
+    # sandbox, con el fork publico. Un runner de GitHub es desechable y
+    # aislado, asi que esa razon desaparece. El control humano sigue estando
+    # en la proteccion de main, que exige PR y aprobacion para llegar hasta
+    # aca. El secreto del kubeconfig vive dentro de este Environment, limitado
+    # a ramas protegidas.
+    environment:
+      name: aws-k3s
+      # La url deja el enlace a la tienda en la pestana Actions y en la vista
+      # de Deployments, que es evidencia del criterio de aceptacion sin tener
+      # que abrir los logs.
+      url: ${{ steps.tienda.outputs.url }}
+    # Baja de 30 a 20: este job ya no construye imagenes, solo aplica. Lo que
+    # queda son los 600s del kubectl wait y los 10 min del smoke test.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
       - name: Marcar el inicio
         run: echo "INICIO=$(date +%s)" >> "$GITHUB_ENV"
 
-      - name: Aislar la configuracion de Docker
-        # El runner arranca desde un LaunchAgent con SessionCreate, o sea una
-        # sesion de seguridad propia que no hereda el llavero del usuario. Si
-        # Docker pide credenciales de un registro, la construccion muere con
-        # "keychain cannot be accessed". No se notaba porque hasta el issue #57
-        # ningun despliegue habia construido nada: las doce imagenes salian de
-        # cache, y sin construir no hay credenciales que pedir.
+      - name: Montar el kubeconfig del k3s
+        # En la fase A bastaba `kubectl config use-context docker-desktop`
+        # porque el kubeconfig ya vivia en la Mac. Un runner de GitHub arranca
+        # limpio: no tiene ningun cluster configurado y hay que darselo.
         #
-        # OJO — QUITAR credsStore NO BASTA. Sin el, Docker en macOS cae en su
-        # helper por defecto, que es osxkeychain: el mismo llavero. Medido con
-        # un señuelo en el PATH sobre esta misma maquina:
+        # El secreto guarda el archivo en base64, y no por seguridad —GitHub
+        # ya cifra los secretos— sino por transporte: un secreto es una cadena
+        # de texto y el kubeconfig es YAML con tres bloques de certificado.
+        # Crudo, cualquier reformateo en el camino lo rompe en silencio.
         #
-        #   {"auths":{}}                     -> llama a osxkeychain
-        #   {"auths":{},"credsStore":""}     -> llama a osxkeychain
-        #   {"auths":{},"credsStore":"noop"} -> llama a noop
-        #
-        # La unica forma de sacar al llavero del camino es darle a Docker un
-        # helper propio que devuelva credenciales vacias. No se pierde nada:
-        # "auths" en la maquina esta vacio y las imagenes base de los
-        # Dockerfiles viven todas en registros publicos.
-        #
-        # El symlink de cli-plugins es aparte: DOCKER_CONFIG tambien es donde
-        # el CLI busca sus plugins, y sin el docker-buildx desaparece y el
-        # build muere con "BuildKit is enabled but the buildx component is
-        # missing" — skaffold.yaml declara useBuildkit: true.
-        #
-        # Todo vive en el workspace, no en $HOME, para no tocar la
-        # configuracion personal del usuario.
+        # Va a RUNNER_TEMP y no al workspace porque el workspace es lo que se
+        # sube en los artefactos; RUNNER_TEMP se destruye con la maquina.
         run: |
           set -euo pipefail
-          mkdir -p "$DOCKER_CONFIG/bin"
+          install -m 600 /dev/null "$RUNNER_TEMP/kubeconfig"
+          echo "${{ secrets.KUBECONFIG_K3S }}" | base64 -d > "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
 
-          cat > "$DOCKER_CONFIG/bin/docker-credential-noop" <<'HELPER'
-          #!/bin/sh
-          # Credenciales vacias para cualquier registro. Existe solo para que
-          # Docker no caiga en osxkeychain. Ver issue #57.
-          [ "$1" = "get" ] && { cat >/dev/null; echo '{"Username":"","Secret":""}'; }
-          exit 0
-          HELPER
-          chmod +x "$DOCKER_CONFIG/bin/docker-credential-noop"
-
-          printf '{"auths":{},"credsStore":"noop"}\n' > "$DOCKER_CONFIG/config.json"
-          ln -sfn "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
-          echo "$DOCKER_CONFIG/bin" >> "$GITHUB_PATH"
-
-          PATH="$DOCKER_CONFIG/bin:$PATH" docker buildx version
-          PATH="$DOCKER_CONFIG/bin:$PATH" command -v docker-credential-noop
-
-      - name: Apuntar al cluster correcto
+      - name: Comprobar que el cluster responde
+        # Preflight. En la fase A, con la Mac apagada el despliegue esperaba
+        # en cola; aqui la instancia detenida lo hace fallar, porque el
+        # laboratorio de AWS Academy apaga las instancias al cerrar sesion.
+        #
+        # Sin este paso el job moriria diez minutos mas tarde, dentro del
+        # kubectl wait, con un error de conexion que no dice la causa. Con el,
+        # muere en 20 segundos diciendo exactamente que pasa.
         run: |
           set -euo pipefail
-          kubectl config use-context "$CONTEXTO_ESPERADO"
-          kubectl cluster-info
-          # Lo contrario de lo que hace ci-main.yaml, que fuerza local-cluster
-          # false para empujar a GKE. Aqui se declara explicito para que una
-          # config global heredada no provoque un push a ningun registro.
-          skaffold config set --kube-context "$CONTEXTO_ESPERADO" local-cluster true
+          if ! kubectl cluster-info --request-timeout=20s; then
+            echo "::error::El cluster de k3s no responde. Lo mas probable es que la instancia de EC2 este detenida: el laboratorio de AWS Academy la apaga al cerrar la sesion. Levantar el laboratorio, correr 'terraform apply' si hiciera falta, regenerar el secreto KUBECONFIG_K3S y reintentar este job."
+            exit 1
+          fi
+          kubectl get nodes -o wide
+
+      - name: Instalar skaffold
+        # kubectl, kustomize y helm ya vienen en la imagen de ubuntu-24.04.
+        # skaffold no. Mismas tres lineas que el job imagenes.
+        run: |
+          curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
+          chmod +x skaffold
+          sudo mv skaffold /usr/local/bin
+
+      - name: Bajar el indice de lo construido
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
 
       - name: Desplegar
         id: deploy
-        # No hace falta --platform: skaffold detecta la arquitectura del
-        # cluster local solo. El fix real (cartservice truena bajo Rosetta
-        # sin el) vive en el profile "local-arm64" de skaffold.yaml, que se
-        # activa solo por kubeContext == docker-desktop. Ver paso 0.
+        # Aqui termina la construccion doble de la fase A. El job ya no
+        # construye: aplica las mismas imagenes que el job imagenes publico en
+        # ghcr.io, leyendo de build.json que artefacto le toca a cada servicio.
         #
-        # Reconstruye en local a proposito, en vez de bajar lo que publico el
-        # job imagenes: Docker Desktop comparte su almacen con el cluster, y
-        # esas imagenes son amd64. Cada merge construye dos veces hasta que el
-        # issue #37 reapunte el despliegue al cluster remoto.
-        run: skaffold run --tag=${{ github.sha }}
+        # Un cluster remoto no comparte almacen con nadie, asi que la unica
+        # forma que tiene de conseguir una imagen es bajarla del registro. Los
+        # paquetes del fork son publicos, asi que no hace falta imagePullSecret.
+        #
+        # Sin --tag: los tags ya vienen dentro de build.json. Sin --default-repo
+        # ni `config set local-cluster false` —que el issue #37 listaba en su
+        # alcance— porque los dos existen para gobernar una construccion, y
+        # aqui no hay ninguna. Verificado con `skaffold render --offline`: los
+        # doce manifiestos salen apuntando a ghcr.io sin tocar Docker.
+        #
+        # El profile local-arm64 de skaffold.yaml queda inactivo solo: se
+        # activa por kubeContext == docker-desktop. Es lo correcto, el nodo
+        # es x86_64.
+        run: skaffold deploy --build-artifacts=build.json
 
       - name: Esperar a que los Deployments esten disponibles
         run: |
@@ -252,6 +290,32 @@ jobs:
                    redis-cart shippingservice; do
             kubectl wait --for=condition=available --timeout=600s deployment/$d
           done
+
+      - name: Obtener la direccion publica de la tienda
+        id: tienda
+        # La direccion sale del kubeconfig, no del Service.
+        #
+        # OJO — `kubectl get svc frontend-external` devuelve 10.0.1.173, la IP
+        # PRIVADA del nodo. El ServiceLB de k3s reporta la direccion que la
+        # instancia conoce de si misma, y la instancia no sabe que tiene una IP
+        # elastica: la traduccion la hace AWS en el borde de la red. Es el
+        # mismo fenomeno que el 127.0.0.1 que el kubeconfig trae de fabrica.
+        # Comprobado contra el cluster el 20/09/2026.
+        #
+        # El server del kubeconfig si es la elastica, porque el modulo de
+        # Terraform ya lo reescribio al extraerlo. Una sola fuente de verdad, y
+        # la misma que el job usa para hablarle al cluster: si el despliegue
+        # funciono, esta direccion es correcta por construccion.
+        #
+        # El puerto va sin :6443 a proposito: ese es el del API de Kubernetes.
+        # La tienda la publica el ServiceLB en el 80 del nodo.
+        run: |
+          set -euo pipefail
+          SERVIDOR=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+          HOST=${SERVIDOR#https://}
+          HOST=${HOST%%:*}
+          echo "Tienda: http://${HOST}"
+          echo "url=http://${HOST}" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test - la tienda responde sin errores
         timeout-minutes: 10
@@ -270,7 +334,7 @@ jobs:
 
       - name: Rollback automatico
         id: rollback
-        # Solo si el despliegue si llego a aplicarse: si `skaffold run` fallo
+        # Solo si el despliegue si llego a aplicarse: si `skaffold deploy` fallo
         # antes de tocar el cluster, no hay nada que revertir y un undo aqui
         # tumbaria la version que esta sana.
         if: failure() && steps.deploy.outcome == 'success'
@@ -291,7 +355,7 @@ jobs:
         run: |
           DURACION=$(( ($(date +%s) - INICIO) / 60 ))
           {
-            echo "## Despliegue en el cluster local"
+            echo "## Despliegue en el cluster de k3s sobre EC2"
             echo ""
             echo "| | |"
             echo "|---|---|"
@@ -300,5 +364,5 @@ jobs:
             echo "| Resultado | ${{ job.status }} |"
             echo "| Rollback | ${{ steps.rollback.outcome || 'no hizo falta' }} |"
             echo "| Duracion | ${DURACION} min |"
-            echo "| Tienda | http://localhost |"
+            echo "| Tienda | ${{ steps.tienda.outputs.url || 'no llego a publicarse' }} |"
           } >> "$GITHUB_STEP_SUMMARY"
