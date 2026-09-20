@@ -27,6 +27,19 @@ La AMI no está fijada por identificador: se resuelve con un `data source` filtr
 
 > Las credenciales del laboratorio son temporales y **caducan al cerrar la sesión**. Cuando un comando responda `ExpiredToken`, hay que pulsar *Start Lab* y volver a pegarlas desde *AWS Details → AWS CLI*, reemplazando el archivo completo: si quedan dos bloques `[default]`, el CLI lee el primero, que es el caducado.
 
+## Revisar que el lab este levantado
+
+```bash
+aws sts get-caller-identity
+```
+
+Si te dice que no se identifica entonces levanta el lab, vete a la parte de AWS Details y pega la llave con este comando 
+
+```bash
+open -a TextEdit ~/.aws/credentials
+```
+Este comando abrira la ventana con la llave, borra y pega la nueva y guardala con command S
+
 ## Preparación, por única vez: el bucket del estado
 
 El estado de Terraform vive en S3. Ese bucket **se crea a mano**, una sola vez:
