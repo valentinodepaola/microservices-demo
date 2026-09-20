@@ -1,8 +1,10 @@
 # El despliegue continuo
 
-Notas de cómo funciona `cd-main.yaml`: qué dispara el despliegue, qué lo frena, qué hace la aprobación del Environment, cómo revierte solo, y qué revisar primero cuando algo falla.
+Notas de cómo funciona `cd-main.yaml`: qué dispara el despliegue, qué lo frena, dónde despliega, cómo revierte solo, y qué revisar primero cuando algo falla.
 
-Montado el 1 de septiembre de 2026 · issue #18 · [ADR 0008](adr/0008-despliegue-continuo-en-dos-fases.md) · corre sobre la infraestructura de [runner-self-hosted.md](runner-self-hosted.md). Pruebas antes del despliegue desde el issue #53; imágenes publicadas en `ghcr.io` desde el #45.
+Montado el 1 de septiembre de 2026 · issue #18 · [ADR 0008](adr/0008-despliegue-continuo-en-dos-fases.md). Pruebas antes del despliegue desde el issue #53; imágenes publicadas en `ghcr.io` desde el #45.
+
+**Desde el 20 de septiembre de 2026 esto es la fase B** — issue #37, [ADR 0010](adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md). El despliegue dejó de correr en la Mac de un integrante y pasó al clúster de k3s sobre EC2 que levanta [`terraform/aws/`](../terraform/aws/README.md). La fase A no se borró: el runner self-hosted, [runner-check.yaml](../.github/workflows/runner-check.yaml) y [runner-self-hosted.md](runner-self-hosted.md) siguen siendo el registro de cómo se llegó hasta acá.
 
 ## Qué lo dispara
 
@@ -13,12 +15,15 @@ merge a main → GitHub Actions → pruebas unitarias (ubuntu-24.04)
                                   ❌ → despliegue omitido, el clúster se queda como estaba
                                   ✅ → construir y publicar en ghcr.io (ubuntu-24.04)
                                        ❌ → despliegue omitido
-                                       ✅ → aprobación del Environment → runner self-hosted (mac-valentino)
-                                          → skaffold run → clúster docker-desktop
+                                       ✅ → deploy (ubuntu-24.04)
+                                          → kubeconfig del secreto → ¿el clúster responde?
+                                          → skaffold deploy (sin construir) → k3s sobre EC2
                                           → kubectl wait → smoke test → ✅  |  ❌ rollback automático
 ```
 
-**Con la Mac apagada, el workflow no falla:** las pruebas corren en la nube y el despliegue **espera en cola** hasta que el runner vuelva a estar en línea. Es el costo aceptado de la fase A — ver [runner-self-hosted.md](runner-self-hosted.md#con-qué-hay-que-contar).
+**Nadie aprueba nada y nadie enciende nada.** Los tres jobs corren en máquinas de GitHub, así que un merge despliega solo. Lo único que tiene que estar encendido es la instancia de EC2 — y ahí está el costo que reemplazó al de la fase A.
+
+**Con el laboratorio de AWS cerrado, el despliegue falla.** No espera en cola como pasaba con la Mac apagada: el clúster no existe mientras la instancia está detenida. Por eso el job comprueba que responda **antes** de intentar nada, y falla en veinte segundos con un mensaje que dice qué hacer, en vez de morir diez minutos después dentro del `kubectl wait`. Ver [qué revisar primero](#qué-revisar-primero-cuando-falla).
 
 ## Las pruebas van primero
 
@@ -30,30 +35,42 @@ Ahora todo vive en `cd-main.yaml`, como tres jobs encadenados con `needs:`:
 |---|---|---|
 | `pruebas` | `ubuntu-24.04`, en la nube | Pruebas de Go (`shippingservice`, `productcatalogservice`, `frontend/validator`) y `dotnet test src/cartservice/` |
 | `imagenes` | `ubuntu-24.04`, en la nube | Construye los doce artefactos de Skaffold para `linux/amd64` y los publica en `ghcr.io`, etiquetados con el SHA |
-| `deploy` | `[self-hosted, order-tracking]`, la Mac | Todo lo demás: despliegue, espera, smoke test y rollback |
+| `deploy` | `ubuntu-24.04`, en la nube | Todo lo demás: kubeconfig, despliegue, espera, smoke test y rollback |
 
-**Si algo falla antes, `deploy` sale como omitido (*skipped*) y la aprobación del Environment no se llega a pedir.** GitHub evalúa la protección del Environment justo cuando el job va a arrancar, y un job omitido nunca arranca. Nadie tiene que acordarse de revisar las pruebas antes de aprobar.
+**Si algo falla antes, `deploy` sale como omitido (*skipped*) y no llega a tocar el clúster.** La versión que está desplegada sigue en pie y no hay nada que revertir.
 
-- **Las pruebas no corren en el runner.** No necesitan el clúster, y así no suman tiempo ni ejecutan código en la máquina del equipo.
+- **Los tres jobs corren en la nube.** Desde el issue #37 ninguno depende de una máquina del equipo, así que un merge despliega sin que nadie encienda nada ni apruebe nada.
 - **La lista de pruebas es la de `ci-pr.yaml`.** Lo que se exige para integrar un PR y lo que se exige para desplegar es lo mismo. Si se suma un servicio a una lista, hay que sumarlo a la otra.
 - **`ci-main.yaml` ya no se dispara con `main`**, solo con `release/*` y a mano. Así hay un solo lugar donde las pruebas deciden si se despliega. No se pierde cobertura: su `paths-ignore` es más amplio que el de `cd-main.yaml`, así que todo merge que lo disparaba también dispara este workflow.
-- **`concurrency: cd-main` cubre también las pruebas.** Si un despliegue anterior está esperando aprobación o a la Mac, las pruebas del merge siguiente esperan con él. GitHub deja una sola ejecución en espera por grupo: si llega una tercera, la que esperaba se cancela, y el merge más reciente prueba y despliega todo junto.
+- **`concurrency: cd-main` cubre también las pruebas.** Si un despliegue anterior sigue corriendo, las pruebas del merge siguiente esperan con él. GitHub deja una sola ejecución en espera por grupo: si llega una tercera, la que esperaba se cancela, y el merge más reciente prueba y despliega todo junto. `cancel-in-progress: false` a propósito — dejar el clúster a medio aplicar es peor que esperar.
 
-**Por qué `needs:` y no encadenar dos workflows con `workflow_run`.** `workflow_run` arranca cuando el otro workflow termina, no cuando sale bien: la condición de éxito hay que agregarla a mano, y si falta, el problema sigue igual pero escondido. Además cambia el disparo de un workflow que usa el runner, y la [regla 1](runner-self-hosted.md#reglas-de-seguridad) solo admite `push` a `main` o `workflow_dispatch`. Y como `ci-main.yaml` ignora los cambios de `kustomize/`, `terraform/` y `helm-chart/`, esos merges se quedarían sin desplegar.
+**Por qué `needs:` y no encadenar dos workflows con `workflow_run`.** `workflow_run` arranca cuando el otro workflow termina, no cuando sale bien: la condición de éxito hay que agregarla a mano, y si falta, el problema sigue igual pero escondido. Además cambia el disparo de un workflow que despliega, y la [regla 1 del ADR 0008](runner-self-hosted.md#reglas-de-seguridad) solo admite `push` a `main` o `workflow_dispatch` — una regla que nació por el runner self-hosted y que se conserva porque ahora protege algo distinto: el secreto del *kubeconfig*. Y como `ci-main.yaml` ignora los cambios de `kustomize/`, `terraform/` y `helm-chart/`, esos merges se quedarían sin desplegar.
 
-## El registro de imágenes, y por qué el despliegue igual construye en local
+## El registro de imágenes: se construye una vez y se despliega eso mismo
 
 Desde el issue #45, cada merge a `main` publica las doce imágenes en `ghcr.io/valentinodepaola`, etiquetadas con el SHA del commit. Lo hace el job `imagenes`, que se autentica con el `GITHUB_TOKEN` que el propio workflow ya recibe: no hay ningún secreto que administrar ni que rotar.
 
-**Construye para `linux/amd64` y nada más.** La Mac del runner es Apple Silicon (`arm64`) y el clúster de la fase B es una EC2 `x86_64` — una imagen construida en la Mac no arrancaría ahí. Construir además la variante `arm64` obligaría a emular con QEMU sobre un runner x86, y nadie usaría esa mitad. Por eso el job corre en `ubuntu-24.04` y no en el runner, y por eso pasa `--platform=linux/amd64` en vez de dejar que Skaffold use las dos plataformas que declara `skaffold.yaml`.
+**Construye para `linux/amd64` y nada más**, porque el nodo de k3s es una EC2 `x86_64`. Construir además la variante `arm64` obligaría a emular con QEMU sobre un runner x86, y no la usaría nadie.
 
-**Y aun así el despliegue vuelve a construir.** Docker Desktop comparte su almacén de imágenes con el clúster, y Skaffold reconoce `docker-desktop` como clúster local: `skaffold run` construye con el Docker local, en `arm64`, y se salta el `push`. No baja nada del registro porque no lo necesita.
+Ese job termina escribiendo `build.json` con `--file-output`: la lista de qué imagen le tocó a cada servicio, con su tag completo. Lo sube con `actions/upload-artifact`, y el job `deploy` lo baja y lo aplica:
 
-Así que **cada merge construye dos veces**: una en Ubuntu para publicar, otra en la Mac para desplegar. Es deliberado, no un descuido — la fase A no necesita registro, y la fase B no puede prescindir de él. Termina cuando el issue #37 reapunte `cd-main.yaml` al clúster de k3s y el despliegue pase a bajar las imágenes en lugar de fabricarlas.
+```
+skaffold deploy --build-artifacts=build.json
+```
+
+`deploy` es *solo desplegar*; `run` era *construir y desplegar*. **El despliegue ya no construye nada.**
+
+### Por qué antes construía dos veces
+
+Hasta el issue #37 cada merge construía los doce servicios dos veces: una en Ubuntu para publicar, otra en la Mac para desplegar. No era un descuido. Docker Desktop **comparte su almacén de imágenes con el clúster**, y Skaffold reconoce `docker-desktop` como clúster local: construir ahí era lo mismo que poner la imagen dentro del clúster, así que bajarla del registro habría sido dar una vuelta innecesaria.
+
+Un clúster remoto no comparte almacén con nadie. La única forma que tiene de conseguir una imagen es bajarla de un registro — y con eso la construcción doble desapareció sola, sin tener que combatirla.
+
+**Lo que se deja de pasar, y por qué no hace falta.** El `Alcance` del issue #37 pedía `--default-repo=ghcr.io/valentinodepaola` y `skaffold config set --global local-cluster false`. Los dos existen para gobernar una construcción: a qué registro empujar, y si hay que empujar. Sin construcción no gobiernan nada, y los tags de `build.json` ya vienen completos. Comprobado con `skaffold render --offline` antes de escribirlo.
 
 **Los paquetes son públicos**, que es lo que la fase B necesita: un k3s sin credenciales se quedaría en `ImagePullBackOff`. La alternativa era un `imagePullSecret` en el clúster, que son más piezas por mantener.
 
-No hizo falta voltearlos a mano: nacieron públicos al publicarse con el `GITHUB_TOKEN` desde un repositorio que ya lo era. Comprobarlo no requiere credenciales — es la misma ruta que seguiría el clúster:
+No hizo falta voltearlos a mano: nacieron públicos al publicarse con el `GITHUB_TOKEN` desde un repositorio que ya lo era. Comprobarlo no requiere credenciales — es la misma ruta que sigue el clúster:
 
 ```bash
 SHA=$(git rev-parse origin/main)
@@ -80,11 +97,23 @@ La clave lleva `github.run_id` porque una clave que ya existe no se sobrescribe:
 
 El resumen del job (`$GITHUB_STEP_SUMMARY`) registra la duración de cada ejecución, que es la evidencia del cuarto criterio del issue #45.
 
-## La aprobación del Environment no contradice "sin intervención"
+## El Environment, y por qué ya no pide aprobación
 
-El criterio de aceptación del issue dice que un merge despliega solo. El Environment `local-cluster` exige un revisor. No son contradictorios: la aprobación es una **compuerta de seguridad obligatoria** (ADR 0008 — el runner corre en una máquina del equipo, sin sandbox, y el fork es público), no un paso operativo. Nadie toca una terminal ni corre un comando — solo aprueba el despliegue que ya está listo para correr.
+El despliegue corre dentro del Environment **`aws-k3s`**, que cumple tres funciones:
 
-Para aprobar: **Actions → la ejecución en cola → Review deployments → Approve and deploy**. El revisor configurado es `valentinodepaola`, con `prevent_self_review: false` a propósito — si no, quien integra el PR no podría aprobar su propio despliegue y el pipeline se trabaría.
+- **Guarda el secreto `KUBECONFIG_K3S`**, el *kubeconfig* del clúster en base64. Un secreto de Environment solo lo alcanza el job que declara ese Environment, a diferencia de uno de repositorio, que cualquier job de cualquier workflow puede pedir. El *kubeconfig* es acceso de administrador al clúster: que lo vea un solo job es la diferencia entre una llave en un cajón y una llave puesta en la puerta.
+- **Restringe las ramas** con `protected_branches: true`. Solo desde una rama protegida —hoy `main` y solo `main`— se puede desplegar y, por lo tanto, alcanzar ese secreto.
+- **Publica la URL de la tienda** en la pestaña Actions y en la vista de Deployments, sin tener que abrir los logs.
+
+**Lo que ya no tiene es revisor requerido**, y conviene dejar claro por qué, porque es un control que se quitó a propósito.
+
+El Environment de la fase A, `local-cluster`, exigía la aprobación de una persona. Esa compuerta no era un capricho: la [regla 2 del ADR 0008](runner-self-hosted.md#reglas-de-seguridad) la justificaba en que el runner corría **en la máquina de un integrante, sin sandbox, desde un fork público**. Cualquier cosa que se ejecutara en ese job se ejecutaba en una computadora personal, y por eso un humano miraba antes.
+
+Un runner de GitHub es una máquina virtual desechable y aislada que se destruye al terminar el job. **La premisa que justificaba la compuerta dejó de ser cierta**, y un control cuya razón se murió deja de ser seguridad y pasa a ser ceremonia.
+
+Lo que no se perdió es el control humano: para que algo llegue a `main` hace falta un pull request aprobado. La revisión sigue estando, solo que en el lugar donde mira código en vez de en el lugar donde ya no hay nada que mirar.
+
+Con eso, el criterio de aceptación del issue #37 —«un merge despliega sin que nadie toque una terminal»— se cumple al pie de la letra, sin nota al pie.
 
 ## El rollback
 
@@ -98,17 +127,38 @@ Esto es el nivel 2 de rollback, automático. Para los otros dos niveles (apagar 
 
 ## Qué revisar primero cuando falla
 
-**Si `deploy` aparece omitido, no es la máquina: falló algo antes.** El error está en `pruebas` o en `imagenes`, y el clúster sigue con la versión anterior. No hay nada que revertir.
-
-**Si `deploy` falla construyendo, con `error getting credentials` o algo sobre el llavero**, es el *credential helper* de Docker chocando con el LaunchAgent del runner. Está explicado en [runner-self-hosted.md](runner-self-hosted.md#el-llavero-y-por-qué-el-job-trae-su-propia-config-de-docker); el job ya trae su propio `DOCKER_CONFIG` para evitarlo, así que si vuelve a salir es que alguien lo quitó.
-
-**Antes de sospechar del pipeline, correr [`runner-check.yaml`](../.github/workflows/runner-check.yaml):**
+**Si el job muere en `Comprobar que el cluster responde`, el laboratorio está cerrado.** Es el caso más frecuente y el más barato de arreglar. La instancia de EC2 se detiene al cerrar la sesión de AWS Academy, y sin instancia no hay clúster. El paso falla en veinte segundos con una anotación que lo dice. Para volver:
 
 ```bash
-gh workflow run runner-check.yaml --repo valentinodepaola/microservices-demo --ref main
+# 1. Start Lab, y pegar las credenciales nuevas (ver terraform/aws/README.md)
+aws sts get-caller-identity
+# 2. Si la instancia no existe, recrearla
+cd terraform/aws && terraform plan -out=tfplan && terraform apply tfplan
+# 3. Volver a extraer el kubeconfig y regenerar el secreto
+terraform output -raw kubeconfig_comando | bash
+base64 -i ~/.kube/boutique-k3s.yaml | gh secret set KUBECONFIG_K3S \
+  -R valentinodepaola/microservices-demo --env aws-k3s
 ```
 
-Revisa que la máquina tenga `docker`, `kubectl`, `skaffold`, y que el contexto sea `docker-desktop`. No despliega nada. Separa en menos de un minuto "la máquina está mal" de "el pipeline está mal".
+El paso 3 no es opcional aunque la IP no haya cambiado: al recrear la instancia, k3s genera **certificados nuevos**, y el *kubeconfig* guardado en el secreto queda apuntando a una cerradura que ya no existe. El síntoma sería un error de TLS, no de conexión.
+
+**Si `deploy` aparece omitido, falló algo antes.** El error está en `pruebas` o en `imagenes`, y el clúster sigue con la versión anterior. No hay nada que revertir.
+
+**Si algún pod queda en `Pending` con `Insufficient cpu`**, es el techo de 2 vCPU del laboratorio. Los `requests` de los doce servicios suman 1570m y el nodo deja 1800m libres después de k3s: entra, pero con 230m de margen. Cualquier servicio nuevo —`orderservice`, `redis-orders`, Jaeger— consume ese margen. Las palancas, en orden: recortar `requests` de los servicios menos exigentes y, como último recurso, desplegar sin `loadgenerator` — que rompe los dos smoke tests.
+
+**Si `emailservice` o `recommendationservice` reinician una vez al arrancar, es esperable.** Los doce pods arrancan a la vez sobre 2 vCPU, la CPU queda contendida, y un `timeoutSeconds: 1` en el probe gRPC declara muerto a un proceso que solo estaba lento — `exitCode=137`, o sea SIGKILL del kubelet. Al reiniciar, los demás ya arrancaron y levanta al primer intento. Medido el 20/09/2026: los doce estables en 50 segundos y el smoke test en 190 peticiones con 0 errores. Los probes viven en `kubernetes-manifests/`, que es el entregable compartido, así que **no se ajustan** para acomodar una limitación del laboratorio.
+
+**Si ningún pod arranca y todos dicen `ImagePullBackOff`**, algún paquete de `ghcr.io` dejó de ser público. Ver la comprobación en [la sección del registro](#el-registro-de-imágenes-se-construye-una-vez-y-se-despliega-eso-mismo).
+
+### Lo que ya no puede pasar
+
+Dos fallas que dominaron la fase A y que desaparecieron con el issue #37, anotadas porque van a aparecer en ejecuciones viejas:
+
+**`error getting credentials` o algo sobre el llavero.** Era el *credential helper* de Docker chocando con el LaunchAgent del runner en macOS (issue #57). El job traía su propio `DOCKER_CONFIG` con un helper `noop` para esquivarlo. Ya no existe: el job no construye imágenes y la máquina no es una Mac. El diagnóstico completo sigue en [runner-self-hosted.md](runner-self-hosted.md#el-llavero-y-por-qué-el-job-trae-su-propia-config-de-docker).
+
+**El despliegue esperando en cola.** Con la Mac apagada, el job quedaba encolado hasta que el runner volviera. Ahora corre en la nube y arranca siempre; lo que puede faltar es el clúster, y eso falla rápido en vez de esperar.
+
+[`runner-check.yaml`](../.github/workflows/runner-check.yaml) sigue existiendo y sigue siendo válido, pero diagnostica el runner self-hosted de la fase A, no este pipeline.
 
 ### `cartservice` y Rosetta — un hallazgo del pre-vuelo, no del pipeline
 
@@ -130,25 +180,39 @@ La causa real: `TARGETARCH` no se estaba propagando correctamente desde Docker D
 
 No toca nada de la fase B — ahí el contexto no es `docker-desktop`, el profile queda inactivo, y `cartservice` usa su default `amd64`, que es correcto en cualquier nube con nodos x86 real. Si en algún momento este profile deja de alcanzar (ej. si otro servicio empieza a fallar igual bajo Rosetta), el índice `8` corresponde a `cartservice` en el array de `build.artifacts` — confirmado con `skaffold diagnose`, no a ojo.
 
-## La fase B — AWS con k3s sobre EC2
+## Dónde despliega: AWS con k3s sobre EC2
 
-Todo lo de arriba es la fase A, ya funcionando. La **fase B** tiene destino desde el 10 de septiembre de 2026: **AWS**, por acceso institucional de AWS Academy. No salió de la comparativa de nubes —ahí AWS quedaba en último lugar— sino de que es el entorno con el que hay que trabajar. El razonamiento completo y lo que se paga por ello están en el [ADR 0010](adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md), que reemplaza la fase B del [ADR 0008](adr/0008-despliegue-continuo-en-dos-fases.md).
+El destino se fijó el 10 de septiembre de 2026 —**AWS**, por acceso institucional de AWS Academy— y quedó en pie el 20 de septiembre con el issue #37. No salió de la comparativa de nubes, donde AWS quedaba en último lugar, sino de que es el entorno con el que hay que trabajar. El razonamiento completo y lo que se paga por ello están en el [ADR 0010](adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md), que reemplaza la fase B del [ADR 0008](adr/0008-despliegue-continuo-en-dos-fases.md).
 
 Dentro de AWS el clúster **no es EKS**: es **k3s sobre una instancia EC2 `x86_64`**, provisionada con Terraform. EKS arrastra un costo de control plane que ningún *free tier* cubre, y en un entorno de AWS Academy la autenticación federada desde GitHub Actions choca con las restricciones de IAM.
 
-| | Fase A — ya | Fase B — AWS |
+| | Fase A — hasta el 20/09 | Fase B — ahora |
 |---|---|---|
-| `runs-on` | `[self-hosted, order-tracking]` | `ubuntu-24.04` |
-| Clúster | `docker-desktop` | k3s sobre EC2 `x86_64` |
-| Contexto | `kubectl config use-context docker-desktop` | *kubeconfig* del k3s, desde los secretos del repositorio |
-| Registro | `ghcr.io` — se publica, pero el despliegue no baja de ahí | El mismo `ghcr.io`, y el despliegue sí baja de ahí |
+| `runs-on` de `deploy` | `[self-hosted, order-tracking]` | `ubuntu-24.04` |
+| Clúster | `docker-desktop`, en una Mac | k3s sobre EC2 `x86_64` |
+| Cómo lo alcanza | `kubectl config use-context docker-desktop` | *Kubeconfig* en un secreto del Environment `aws-k3s` |
+| Compuerta | Revisor requerido en el Environment | Ninguna — la razón que la justificaba desapareció |
+| Imágenes | `ghcr.io` publica, pero el despliegue reconstruye en local | `ghcr.io`, y el despliegue aplica eso mismo sin construir |
 | Infraestructura | Ninguna | Terraform, con estado remoto en S3 |
 
 **Por qué `ghcr.io` y no ECR.** Las credenciales de AWS Academy rotan en cada sesión —clave, secreto y *session token*—, así que un secreto de GitHub Actions apuntando a ECR caduca cada pocas horas. `ghcr.io` se autentica con el token que el propio workflow ya recibe, y no hay nada que rotar.
 
 **Por qué `x86_64` y no Graviton.** Las imágenes de Online Boutique no tienen variante ARM. Las instancias baratas de AWS sí lo son, y elegir una de esas deja los doce pods sin arrancar.
 
-Lo que **no** cambia, igual que predijo el ADR 0008: los jobs `pruebas` e `imagenes` —ya corren en `ubuntu-24.04`—, los pasos de espera, los smoke tests y el rollback. El profile `local-arm64` de `skaffold.yaml` queda inactivo por sí solo, porque se activa por `kubeContext: docker-desktop`.
+**Lo que no cambió, que es la apuesta del ADR 0008 cobrada.** Los jobs `pruebas` e `imagenes` ya corrían en `ubuntu-24.04` y no se tocaron. Dentro de `deploy`, los pasos de espera, los dos smoke tests y el rollback quedaron **idénticos, carácter por carácter**, pese a que el destino cambió de un Docker Desktop en una Mac a un k3s en otro continente. El cambio entero fueron 121 líneas agregadas —más de la mitad comentarios— y 71 borradas, de las cuales 48 eran el arreglo del llavero de macOS que dejó de hacer falta.
+
+El profile `local-arm64` de `skaffold.yaml` queda inactivo por sí solo, porque se activa por `kubeContext: docker-desktop`. Es lo correcto: el nodo es x86.
+
+### Verificado el 20 de septiembre de 2026
+
+El despliegue se corrió contra el clúster real, con el mismo comando que ejecuta el workflow:
+
+| Qué | Resultado |
+|---|---|
+| Los doce Deployments | `Running` en 64 segundos, estabilizados en 50s |
+| La tienda desde internet | `HTTP 200` en 120 ms |
+| Smoke test | 190 peticiones, **0 errores** |
+| CPU del nodo con todo arriba | 1770m de 2000m (88%) |
 
 ### El entorno, verificado el 10 de septiembre de 2026
 
@@ -171,12 +235,16 @@ Los límites del laboratorio de AWS Academy deciden el dimensionamiento. Se comp
 
 Descrita en [`terraform/aws/`](../terraform/aws/README.md): VPC, subred pública, internet gateway, tabla de rutas, security group con `6443` y `80` —sin SSH, se entra por SSM—, la instancia con k3s y su IP elástica. El estado vive en S3 con bloqueo nativo.
 
-El módulo **crea la infraestructura y no despliega la aplicación**: eso queda para `cd-main.yaml`, que es el reapuntamiento pendiente del issue #37.
+El módulo **crea la infraestructura y no despliega la aplicación**: eso lo hace `cd-main.yaml`. La separación es deliberada — el módulo heredado de Google mezclaba las dos cosas en un mismo `apply`, y así ni la infraestructura ni el despliegue se distinguían como piezas propias.
+
+**Al terminar la jornada la instancia se detiene, no se destruye.** Detenida cuesta del orden de 0.20 USD por día y conserva el disco, la IP elástica, el *kubeconfig* y la aplicación desplegada; volver es un comando. Destruirla obliga a recrearla, regenerar el secreto `KUBECONFIG_K3S` —porque k3s emite certificados nuevos— y volver a desplegar. El procedimiento completo está en [operar-el-cluster-de-aws.md](operar-el-cluster-de-aws.md).
 
 ## Páginas relacionadas
 
-- [runner-self-hosted.md](runner-self-hosted.md) — la máquina y el Environment sobre los que corre este workflow
-- [ADR 0008](adr/0008-despliegue-continuo-en-dos-fases.md) — el diseño en dos fases sobre un mismo workflow
+- [operar-el-cluster-de-aws.md](operar-el-cluster-de-aws.md) — **cómo levantar y apagar el clúster**, renovar las llaves del laboratorio y qué hacer cuando la tienda no responde
+- [`terraform/aws/README.md`](../terraform/aws/README.md) — el módulo que levanta el clúster y produce el *kubeconfig*
+- [ADR 0008](adr/0008-despliegue-continuo-en-dos-fases.md) — el diseño en dos fases sobre un mismo workflow, y las tres reglas de seguridad
 - [ADR 0010](adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md) — el destino de la fase B: AWS con k3s sobre EC2
 - [`cd-main.yaml`](../.github/workflows/cd-main.yaml) — el workflow
-- [`runner-check.yaml`](../.github/workflows/runner-check.yaml) — diagnóstico de la máquina, correr primero ante cualquier falla
+- [runner-self-hosted.md](runner-self-hosted.md) — la máquina de la fase A. Ya no despliega, pero es el registro de cómo se llegó hasta acá
+- [`runner-check.yaml`](../.github/workflows/runner-check.yaml) — diagnóstico de esa máquina, no de este pipeline

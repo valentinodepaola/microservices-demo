@@ -24,9 +24,25 @@ Go and C# unit tests run in three places:
 
 The `imagenes` job, between `pruebas` and `deploy`. On every push to main it builds the twelve Skaffold artifacts and publishes them to `ghcr.io/valentinodepaola`, tagged with the commit SHA. It authenticates with the workflow's own `GITHUB_TOKEN` — there is no secret to manage.
 
-It runs on `ubuntu-24.04`, not on the self-hosted runner, and builds **`linux/amd64` only**: the runner is Apple Silicon (`arm64`) and the phase B cluster is an `x86_64` EC2 instance. `packages: write` is declared at the job level, so the `deploy` job keeps the workflow-wide `contents: read` that [ADR 0008](../../docs/adr/0008-despliegue-continuo-en-dos-fases.md) requires.
+It runs on `ubuntu-24.04` and builds **`linux/amd64` only**, because the cluster is an `x86_64` EC2 instance. `packages: write` is declared at the job level, so the `deploy` job keeps the workflow-wide `contents: read` that [ADR 0008](../../docs/adr/0008-despliegue-continuo-en-dos-fases.md) requires.
 
-The phase A deploy still builds its own images locally against Docker Desktop, so every merge builds twice. That ends when issue #37 repoints the deployment at the remote cluster. See [docs/despliegue-continuo.md](../../docs/despliegue-continuo.md#el-registro-de-imágenes-y-por-qué-el-despliegue-igual-construye-en-local).
+The job writes `build.json` with `--file-output` and uploads it as an artifact. That file is the index of which image belongs to each service, and it is what the `deploy` job consumes.
+
+### Deploy - [cd-main.yaml](cd-main.yaml)
+
+The `deploy` job, last in the chain. Since issue #37 it runs on `ubuntu-24.04` against the k3s cluster on EC2 described in [ADR 0010](../../docs/adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md), provisioned by [`terraform/aws/`](../../terraform/aws/README.md).
+
+It mounts the cluster's kubeconfig from the `KUBECONFIG_K3S` secret of the `aws-k3s` environment, checks that the cluster answers before doing anything, and then applies with:
+
+```
+skaffold deploy --build-artifacts=build.json
+```
+
+**It does not build.** A remote cluster shares no image store with anyone, so it pulls from `ghcr.io` — which ends the double build of phase A, where every merge built the twelve services once in Ubuntu to publish and once on the Mac to deploy.
+
+The environment has **no required reviewer**. The one in phase A had it because the runner ran unsandboxed on a team member's machine; a GitHub runner is a disposable VM, so that reason is gone. Branch protection on `main` still gates what reaches this job. See [docs/despliegue-continuo.md](../../docs/despliegue-continuo.md#el-environment-y-por-qué-ya-no-pide-aprobación).
+
+Phase A is not deleted: the self-hosted runner, [runner-check.yaml](runner-check.yaml) and [docs/runner-self-hosted.md](../../docs/runner-self-hosted.md) remain as the record of how this was reached.
 
 ### Deploy Tests- [ci-pr.yaml](ci-pr.yaml)
 
