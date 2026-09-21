@@ -206,6 +206,46 @@ Dejar constancia en el issue de cuándo se destruyó: el versionado del estado e
 
 ---
 
+## ¿Está encendida? Comprobarlo sin abrir el laboratorio
+
+La pregunta más común, y tiene una trampa: **para preguntarle a AWS hay que abrir el laboratorio, y abrir el laboratorio enciende la instancia.** Lo que querías averiguar se modifica al averiguarlo. Pasó el 20/09: un `start-instances` respondió `PreviousState: running`, porque el laboratorio ya la había encendido solo al abrir la sesión.
+
+Por eso la comprobación útil no usa AWS: le pregunta **directamente a la máquina**, por la IP elástica. No necesita credenciales y no enciende nada.
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 http://3.94.38.103/
+```
+
+| Respuesta | Qué significa |
+|---|---|
+| `200` | Encendida, con la tienda arriba — **está gastando** |
+| `000` | Nada contestó en 10 segundos: **apagada** |
+| cualquier otro código | Encendida, pero la tienda no está sana. Ver [síntomas](#síntomas-y-causas) |
+
+`000` no es un código HTTP, es `curl` diciendo que no hubo respuesta. Una máquina encendida siempre contesta algo, aunque sea un error.
+
+**Si la IP elástica cambió** —solo pasa si se destruyó la infraestructura— la actual está en `terraform output public_ip`.
+
+### Con AWS, cuando el laboratorio ya está abierto
+
+Si ya tenés una sesión abierta y credenciales vigentes, AWS da la respuesta exacta:
+
+```bash
+aws ec2 describe-instances --filters "Name=tag:Name,Values=boutique-k3s" \
+  --query 'Reservations[].Instances[].State.Name' --output text
+```
+
+`running`, `stopped` o `stopping`. Si abriste el laboratorio solo para mirar, recordá que ya la encendiste: [detenela](#terminar-la-jornada).
+
+### Qué pasa cuando la sesión expira sola
+
+El laboratorio corre con un temporizador que **sigue aunque se cierre la pestaña del navegador**. Al vencer, AWS Academy hace dos cosas:
+
+1. **Detiene la instancia.** No la destruye: el disco, la IP elástica y la aplicación se conservan.
+2. **Anula las credenciales.** No las borra: les cuelga encima una política de denegación explícita, `voc-cancel-cred`. El archivo `~/.aws/credentials` sigue igual, y todo lo que pidas con él queda denegado.
+
+Comprobado el 20/09/2026: el despliegue del merge del PR #63 corrió a las 22:40 UTC contra una instancia detenida, y la máquina volvió a arrancar a las 22:42, cuando se reabrió el laboratorio. El preflight del workflow cortó en 40 segundos con el diagnóstico correcto, y se recuperó con *Re-run failed jobs*.
+
 ## Comprobar que todo está bien
 
 ```bash
@@ -224,6 +264,9 @@ El `curl` tiene que devolver `HTTP/1.1 200 OK`. La dirección sale del *kubeconf
 | Qué ves | Qué es |
 |---|---|
 | `InvalidClientTokenId` | Las llaves caducaron. [Renovarlas](#1-encender-el-laboratorio-y-renovar-las-llaves) |
+| `RequestExpired` | La sesión del laboratorio venció. La instancia casi seguro está detenida. [Renovar las llaves](#1-encender-el-laboratorio-y-renovar-las-llaves) |
+| `explicit deny` … `policy/voc-cancel-cred` | Lo mismo, dicho de otra forma: AWS Academy anuló las credenciales al cerrar la sesión. [Renovarlas](#1-encender-el-laboratorio-y-renovar-las-llaves) |
+| `curl` devuelve `000` | La instancia está apagada. Ver [cómo comprobarlo](#está-encendida-comprobarlo-sin-abrir-el-laboratorio) |
 | El job muere en `Comprobar que el cluster responde` | La instancia está detenida. Arrancarla y **Re-run jobs** |
 | Error de **TLS** al conectar | El secreto `KUBECONFIG_K3S` es de una instancia anterior. Regenerarlo |
 | Un pod en `Pending` con `Insufficient cpu` | El techo de 2 vCPU del laboratorio. Ver [despliegue-continuo.md](despliegue-continuo.md#qué-revisar-primero-cuando-falla) |
@@ -238,7 +281,10 @@ El `curl` tiene que devolver `HTTP/1.1 200 OK`. La dirección sale del *kubeconf
 # ¿Las llaves andan?
 aws sts get-caller-identity
 
-# ¿En qué estado está la instancia?
+# ¿Está encendida? Sin credenciales y sin encenderla (200 = sí, 000 = no)
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 http://3.94.38.103/
+
+# ¿En qué estado está la instancia? (necesita el laboratorio abierto)
 aws ec2 describe-instances --filters "Name=tag:Name,Values=boutique-k3s" \
   --query 'Reservations[].Instances[].State.Name' --output text
 
