@@ -1,120 +1,122 @@
 # Operar el clúster de AWS
 
-Qué hacer para que la tienda esté arriba, qué hacer cuando no lo está, y qué apagar al terminar. Escrito el 20 de septiembre de 2026 · issue #37.
+Cómo levantar el clúster, cómo saber si está encendido, qué hacer cuando no responde y cómo apagarlo al terminar. Escrito el 20 de septiembre de 2026, con el issue #37.
 
-Esta página es **operativa**. El porqué de cada decisión está en el [ADR 0010](adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md), el pipeline en [despliegue-continuo.md](despliegue-continuo.md) y la infraestructura en [`terraform/aws/README.md`](../terraform/aws/README.md).
+Aquí solo están los pasos. Por qué se decidió cada cosa está en el [ADR 0010](adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md), cómo funciona el pipeline en [despliegue-continuo.md](despliegue-continuo.md) y qué crea Terraform en [`terraform/aws/README.md`](../terraform/aws/README.md).
 
 ---
 
-## Lo primero: dos mundos que no se tocan
+## Git y AWS son cosas separadas
 
-Confundirlos es la fuente de casi todas las dudas.
+Esto es lo primero que hay que tener claro, porque de aquí salen casi todas las dudas.
 
 | | Git y GitHub | AWS |
 |---|---|---|
 | Qué es | Ramas, commits, pull requests | Una máquina encendida en Virginia |
-| Cuándo se toca | Todo el tiempo | Solo al empezar y terminar la jornada |
-| Crear una rama | sí | **no pasa nada en AWS** |
-| Abrir un PR | sí | **no pasa nada en AWS** |
-| Integrar a `main` | sí | **acá sí**: el pipeline despliega |
+| Cuándo lo tocas | Todo el tiempo | Al empezar y al terminar el día |
+| Crear una rama | sí | no pasa nada |
+| Abrir un PR | sí | no pasa nada |
+| Hacer merge a `main` | sí | aquí sí: el pipeline despliega |
 
-**Crear ramas, commitear y abrir PRs no requiere tocar Terraform ni encender nada.** Se pueden abrir cincuenta ramas con el laboratorio cerrado. Lo único que necesita el clúster vivo es el **merge a `main`**, porque ahí corre `cd-main.yaml`.
+Puedes crear ramas, hacer commits y abrir PRs con el lab cerrado. No hace falta correr Terraform ni encender nada. Lo único que necesita el clúster encendido es el merge a `main`, porque ahí corre `cd-main.yaml`.
 
 ---
 
-## El flujo completo, de punta a punta
+## Cómo funciona el despliegue
 
 ```
 1. Rama nueva, commits, PR                      → AWS no se entera
-2. Alguien aprueba el PR y lo integra a main    → arranca cd-main.yaml
+2. Alguien aprueba el PR y hace merge a main    → arranca cd-main.yaml
 3. Job "pruebas"    (máquina de GitHub)         → Go y C#
 4. Job "imagenes"   (máquina de GitHub)         → construye las 12 y las sube a ghcr.io
                                                    + sube build.json como artefacto
 5. Job "deploy"     (máquina de GitHub)
    ├─ monta el kubeconfig desde el secreto
-   ├─ ¿el clúster responde?  ──── NO ──→ falla en 20 s: "el laboratorio está detenido"
+   ├─ ¿el clúster responde?  ──── NO ──→ falla en unos segundos: "el laboratorio está detenido"
    ├─ skaffold deploy (no construye: baja de ghcr.io)
    ├─ espera a los 12 Deployments
    ├─ smoke test: 50 peticiones, 0 errores
    └─ ✅  |  ❌ → rollback automático a la versión anterior
 ```
 
-**Nadie aprueba nada y nadie corre un comando.** La única condición es que la instancia de EC2 esté encendida.
+Nadie tiene que aprobar el despliegue ni correr comandos. Lo único que se necesita es que la instancia de EC2 esté encendida.
 
-### Qué significa para el equipo
+### Lo que tiene que saber el equipo
 
-**Los merges de Alessia despliegan solos, igual que los tuyos** — el pipeline no distingue quién integró.
+Los merges de cualquiera se despliegan solos, también los de Alessia. Al pipeline no le importa quién hizo el merge.
 
-**Pero solo vos podés encender el clúster**, porque el laboratorio de AWS Academy está atado a tu cuenta institucional. Si alguien integra un PR con el laboratorio cerrado:
+Pero el clúster solo lo puedo encender yo, porque el lab de AWS Academy está en mi cuenta de Tecmilenio. Si alguien hace merge con el lab cerrado:
 
-- El job `deploy` falla en veinte segundos con un mensaje que lo explica.
-- **No se rompe nada**: el clúster no existe, así que no hay nada a medio aplicar.
-- Las imágenes **sí quedaron publicadas** en `ghcr.io` por el job anterior.
-- Para recuperarlo: encendés el laboratorio y le das **Re-run jobs** a esa ejecución. No hace falta un commit nuevo.
+- El job `deploy` falla en unos segundos con un mensaje que dice que la instancia está detenida.
+- No se rompe nada. El clúster no está encendido, así que no queda nada a medias.
+- Las imágenes sí se publican en `ghcr.io`, eso lo hace el job anterior.
+- Para arreglarlo, enciendo el lab y le doy **Re-run failed jobs** a esa ejecución. No hace falta un commit nuevo.
 
-Conviene que el equipo lo sepa: el despliegue es automático, la disponibilidad del clúster no.
+O sea: el despliegue es automático, pero que el clúster esté encendido depende de mí.
 
 ---
 
-## Empezar la jornada
+## Empezar el día
 
-### 1. Encender el laboratorio y renovar las llaves
+### 1. Levantar el lab y cambiar las llaves
 
-Las credenciales de AWS Academy son **temporales**: incluyen un `aws_session_token` que caduca al cerrar la sesión. Pulsar *Start Lab* genera un juego nuevo **en la página**, no en tu disco — por eso hay que copiarlas a mano cada vez.
+Las llaves de AWS Academy duran lo que dura la sesión. Traen un `aws_session_token` que deja de servir cuando la sesión se cierra. Cada vez que le das a *Start Lab* te da llaves nuevas, pero se quedan en la página, no se guardan solas en tu computadora. Por eso hay que copiarlas cada vez.
 
-1. En el laboratorio, *Start Lab*, y esperar el punto verde.
-2. *AWS Details* → *AWS CLI* → *Show*. Copiar el bloque entero (⌘C).
+1. En el lab, dale a *Start Lab* y espera a que el círculo se ponga verde.
+2. Ve a *AWS Details* → *AWS CLI* → *Show* y copia todo el bloque (⌘C).
 3. En la terminal:
 
 ```bash
 pbpaste > ~/.aws/credentials && chmod 600 ~/.aws/credentials
 ```
 
-`pbpaste` vuelca el portapapeles al archivo **pisando lo que había**, que es justamente lo que hace falta.
+`pbpaste` pega lo que copiaste directo en el archivo y borra lo que había antes, que es lo que queremos.
 
-> **El error más caro de esta página:** pegar las llaves nuevas *debajo* de las viejas. Si el archivo queda con dos bloques `[default]`, el CLI lee **el primero** —el caducado— y vas a seguir viendo `InvalidClientTokenId` con las credenciales nuevas ya pegadas. Por eso `>` y no `>>`.
+> **Cuidado:** si pegas las llaves nuevas debajo de las viejas, el archivo queda con dos bloques `[default]` y el CLI lee el primero, que es el viejo. Vas a seguir viendo `InvalidClientTokenId` aunque ya pegaste las nuevas. Por eso el comando usa `>` y no `>>`.
 
-Comprobar:
+Si prefieres hacerlo a mano, abre el archivo con `open -a TextEdit ~/.aws/credentials`, borra todo, pega las llaves nuevas y guarda con ⌘S.
+
+Para revisar que funcionen:
 
 ```bash
 aws sts get-caller-identity
 ```
 
-Si devuelve un JSON con tu `Arn`, las llaves andan. Si dice `InvalidClientTokenId`, no se pegaron bien.
+Si te regresa un JSON con tu `Arn`, ya quedaron. Si dice `InvalidClientTokenId`, no se pegaron bien.
 
-### 2. Poner el clúster en pie
+### 2. Levantar el clúster
 
-Depende de en qué estado lo dejaste. Averiguarlo:
+Depende de cómo lo dejaste la última vez. Para saberlo:
 
 ```bash
 aws ec2 describe-instances --filters "Name=tag:Name,Values=boutique-k3s" \
   --query 'Reservations[].Instances[].State.Name' --output text
 ```
 
-| Respuesta | Qué hacer |
+| Si dice | Qué hacer |
 |---|---|
-| `running` | Nada. Ya está arriba — el laboratorio suele reencenderla sola al abrir sesión |
-| `stopped` | [Arrancarla](#caso-a-la-instancia-existe-y-está-detenida) |
-| vacío, o `terminated` | [Recrearla con Terraform](#caso-b-la-instancia-no-existe) |
+| `running` | Nada, ya está encendida. Normalmente el lab la enciende solo cuando abres la sesión |
+| `stopped` | [Encenderla](#si-la-instancia-está-detenida) |
+| nada, o `terminated` | [Crearla otra vez con Terraform](#si-la-instancia-no-existe) |
 
 ---
 
-### Caso A: la instancia existe y está detenida
+### Si la instancia está detenida
 
 ```bash
 cd terraform/aws
 aws ec2 start-instances --instance-ids $(terraform output -raw instance_id)
 ```
 
-Esperar un minuto y comprobar:
+Espera un minuto y revisa:
 
 ```bash
 kubectl --kubeconfig ~/.kube/boutique-k3s.yaml get nodes
 ```
 
-**No hay que hacer nada más.** k3s arranca solo con la máquina, la IP elástica sigue asociada, el *kubeconfig* guardado sigue siendo válido y **la aplicación sigue desplegada** — los doce pods vuelven a levantar con las imágenes que ya están en el disco.
+Y ya, no hay que hacer nada más. k3s arranca solo con la máquina, la IP elástica sigue siendo la misma, el kubeconfig sigue sirviendo y la tienda sigue desplegada. Los doce pods vuelven a levantarse con las imágenes que ya estaban en el disco.
 
-### Caso B: la instancia no existe
+### Si la instancia no existe
 
 ```bash
 cd terraform/aws
@@ -122,36 +124,36 @@ terraform plan -out=tfplan
 terraform apply tfplan
 ```
 
-Tiene que decir **`12 to add, 0 to change, 0 to destroy`**. Si el número es otro, parar y revisar antes de aplicar.
+El plan tiene que decir `12 to add, 0 to change, 0 to destroy`. Si sale otro número, no apliques y revisa primero qué está pasando.
 
-Tarda unos dos minutos. Después:
+Tarda como dos minutos.
 
-> **`Apply complete` no significa que el clúster esté listo.** Terraform garantiza que la máquina existe y arrancó; k3s se instala adentro por `user_data` y tarda **alrededor de un minuto más**. Si le hablás antes, vas a ver `connection refused` y vas a creer que algo salió mal.
+> Que diga `Apply complete` no quiere decir que el clúster ya esté listo. Terraform solo asegura que la máquina se creó y arrancó. k3s se instala adentro con el `user_data` y tarda como un minuto más. Si intentas conectarte antes, te va a salir `connection refused` aunque todo esté bien.
 
-Sacar el *kubeconfig*:
+Luego saca el kubeconfig:
 
 ```bash
 terraform output -raw kubeconfig_comando | bash
 kubectl --kubeconfig ~/.kube/boutique-k3s.yaml get nodes -o wide
 ```
 
-Tiene que salir un nodo `Ready` con `ARCH` en **amd64**.
+Tiene que salir un nodo `Ready` con `ARCH` en `amd64`.
 
-**Y acá viene el paso que es fácil olvidar.** Al recrear la instancia, k3s genera **certificados nuevos**: el *kubeconfig* que está guardado en el secreto de GitHub quedó apuntando a una cerradura que ya no existe. Hay que regenerarlo:
+**Este paso es fácil de olvidar:** cuando se crea una instancia nueva, k3s genera certificados nuevos. El kubeconfig que está guardado en el secreto de GitHub ya no sirve, porque es de la instancia anterior. Hay que actualizarlo:
 
 ```bash
 base64 -i ~/.kube/boutique-k3s.yaml | gh secret set KUBECONFIG_K3S \
   -R valentinodepaola/microservices-demo --env aws-k3s
 ```
 
-> Si se salta este paso, el job `deploy` no falla en el preflight —el clúster responde— sino más adelante, con un error de **TLS**. Es el síntoma que delata un secreto viejo.
+> Si no lo actualizas, el job `deploy` pasa la revisión del clúster (el clúster sí responde) pero después falla con un error de TLS. Si ves un error de TLS, casi seguro es esto.
 
-Por último, la aplicación **no está desplegada**: la instancia es nueva y está vacía. Vuelve con el siguiente merge a `main`, o a mano:
+Por último, la tienda no está desplegada porque la instancia es nueva y está vacía. Se despliega sola con el siguiente merge a `main`, o la puedes desplegar a mano:
 
 ```bash
 export KUBECONFIG=~/.kube/boutique-k3s.yaml
 SHA=$(git rev-parse origin/main)
-# build.json con los doce artefactos publicados para ese commit
+# build.json con las doce imágenes publicadas para ese commit
 python3 - "$SHA" <<'PY' > /tmp/build.json
 import json, sys
 n = ['emailservice','productcatalogservice','recommendationservice','shoppingassistantservice',
@@ -162,51 +164,91 @@ PY
 skaffold deploy --build-artifacts=/tmp/build.json
 ```
 
-Es el mismo comando exacto que corre el workflow.
+Es el mismo comando que corre el workflow.
 
 ---
 
-## Terminar la jornada
+## Terminar el día
 
-**Detener la instancia, no destruirla.**
+Hay que detener la instancia, no destruirla.
 
 ```bash
 cd terraform/aws
 aws ec2 stop-instances --instance-ids $(terraform output -raw instance_id)
 ```
 
-### Por qué detener y no destruir
+### Por qué detenerla y no destruirla
 
-| | Costo por día | Qué conserva |
+| | Costo por día | Qué se queda |
 |---|---|---|
-| Corriendo 24 h | ~2.40 USD | todo |
-| **Detenida** | **~0.20 USD** | disco, IP elástica, *kubeconfig*, la app desplegada |
+| Encendida todo el día | ~2.40 USD | todo |
+| Detenida | ~0.20 USD | disco, IP elástica, kubeconfig y la tienda desplegada |
 | Destruida | 0 | nada |
 
-*(Tarifas públicas aproximadas: `m5.large` ~0.096 USD/h, EBS gp3 de 30 GB ~0.08 USD/día, IPv4 pública ~0.12 USD/día. La API de precios está bloqueada en el laboratorio, así que no se pudieron verificar contra AWS.)*
+*(Son precios públicos aproximados: `m5.large` ~0.096 USD/h, disco gp3 de 30 GB ~0.08 USD/día, IP pública ~0.12 USD/día. No los pude revisar contra AWS porque el lab bloquea la API de precios.)*
 
-Detenida, el presupuesto de 50 USD aguanta meses. Y sobre todo: **volver es un comando y un minuto**, sin regenerar el secreto ni volver a desplegar.
+Detenida, el crédito de 50 USD alcanza para meses. Y para volver solo necesitas un comando y esperar un minuto, sin actualizar el secreto ni volver a desplegar.
 
-Destruir obliga, cada vez, a `terraform apply` + regenerar `KUBECONFIG_K3S` + volver a desplegar la aplicación. Por veinte centavos al día, no compensa.
+Si la destruyes, cada vez que vuelvas tienes que correr `terraform apply`, actualizar `KUBECONFIG_K3S` y volver a desplegar la tienda. Por 20 centavos al día no vale la pena.
 
-> **Ojo con lo que el laboratorio hace por su cuenta:** reenciende las instancias detenidas al abrir sesión. Si entrás al laboratorio por cualquier otro motivo, la instancia arranca y empieza a gastar. Si no vas a trabajar con el clúster, detenela otra vez.
+> **Ojo:** el lab enciende solo las instancias detenidas cuando abres la sesión. Si entras al lab para otra cosa, la instancia se enciende y empieza a gastar. Si no vas a usar el clúster, detenla otra vez.
 
-### Cuándo sí destruir
+### Cuándo sí destruirla
 
-- **Cuando el proyecto termine**, después de la entrega y la demostración.
-- Si el crédito se acerca al límite. Agotarlo **desactiva la cuenta y borra todo**, incluido el bucket de S3 con el estado de Terraform.
+- Cuando termine el proyecto, después de la entrega y la demo.
+- Si el crédito se está acabando. Si se acaba, la cuenta se desactiva y se borra todo, también el bucket de S3 donde está el estado de Terraform.
 
 ```bash
 cd terraform/aws && terraform destroy
 ```
 
-Dejar constancia en el issue de cuándo se destruyó: el versionado del estado en S3 es evidencia del criterio de infraestructura como código.
+Cuando la destruyas, déjalo anotado en el issue con la fecha. El historial de versiones del estado en S3 sirve como evidencia de la infraestructura como código.
 
-> **No tocar nunca el botón *Reset* del laboratorio.** Borra la cuenta entera, incluido el bucket del estado de Terraform.
+> **Nunca le des al botón *Reset* del lab.** Borra toda la cuenta, también el bucket con el estado de Terraform.
 
 ---
 
-## Comprobar que todo está bien
+## Revisar si la instancia está encendida
+
+Aquí hay un problema: para preguntarle a AWS tienes que abrir el lab, y al abrir el lab la instancia se enciende sola. O sea, al revisar ya la encendiste. Me pasó el 20/09: corrí `start-instances` y me respondió `PreviousState: running`, porque el lab ya la había encendido al abrir la sesión.
+
+Por eso es mejor preguntarle directo a la máquina con `curl`, usando la IP elástica. No necesitas llaves y no enciendes nada:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 http://3.94.38.103/
+```
+
+| Si responde | Quiere decir |
+|---|---|
+| `200` | Está encendida y la tienda funciona. Está gastando |
+| `000` | No respondió nada en 10 segundos. Está apagada |
+| otro número | Está encendida pero la tienda tiene un problema. Revisa los [síntomas](#síntomas-y-qué-significan) |
+
+`000` no es un código de HTTP. Es `curl` diciendo que nadie contestó. Si la máquina estuviera encendida contestaría algo, aunque fuera un error.
+
+Si la IP elástica cambió (solo pasa si destruiste la infraestructura), la nueva la sacas con `terraform output public_ip`.
+
+### Revisarlo con AWS, si el lab ya está abierto
+
+Si ya abriste la sesión y tus llaves funcionan, AWS te dice exactamente cómo está:
+
+```bash
+aws ec2 describe-instances --filters "Name=tag:Name,Values=boutique-k3s" \
+  --query 'Reservations[].Instances[].State.Name' --output text
+```
+
+Te va a decir `running`, `stopped` o `stopping`. Si abriste el lab solo para revisar, acuérdate de que ya la encendiste y [detenla](#terminar-el-día).
+
+### Qué pasa cuando se acaba la sesión del lab
+
+El lab tiene un tiempo límite que sigue corriendo aunque cierres la pestaña de Chrome. Cuando se acaba, AWS Academy hace dos cosas:
+
+1. **Detiene la instancia.** No la borra: el disco, la IP elástica y la tienda se quedan.
+2. **Bloquea las llaves.** No las borra, les pone encima una política que niega todo, `voc-cancel-cred`. Tu archivo `~/.aws/credentials` se queda igual, pero cualquier cosa que pidas te la va a rechazar.
+
+Lo comprobé el 20/09/2026: el despliegue del merge del PR #63 corrió a las 22:40 UTC con la instancia detenida, y la máquina volvió a arrancar a las 22:42, cuando volví a abrir el lab. El workflow detectó en 40 segundos que el clúster no respondía, y lo arreglé con *Re-run failed jobs*.
+
+## Revisar que todo funcione
 
 ```bash
 export KUBECONFIG=~/.kube/boutique-k3s.yaml
@@ -217,32 +259,38 @@ curl -I http://$(kubectl config view --minify \
   -o jsonpath='{.clusters[0].cluster.server}' | sed 's|https://||; s|:.*||')
 ```
 
-El `curl` tiene que devolver `HTTP/1.1 200 OK`. La dirección sale del *kubeconfig* y no de `kubectl get svc`: ese devuelve la IP **privada** del nodo, porque la instancia no sabe que tiene una IP elástica — la traducción la hace AWS en el borde.
+El `curl` tiene que regresar `HTTP/1.1 200 OK`. La IP la saco del kubeconfig y no de `kubectl get svc`, porque ese regresa la IP privada del nodo. La instancia no sabe que tiene una IP elástica, esa traducción la hace AWS por fuera.
 
-### Síntomas y causas
+### Síntomas y qué significan
 
-| Qué ves | Qué es |
+| Qué ves | Qué pasa |
 |---|---|
-| `InvalidClientTokenId` | Las llaves caducaron. [Renovarlas](#1-encender-el-laboratorio-y-renovar-las-llaves) |
-| El job muere en `Comprobar que el cluster responde` | La instancia está detenida. Arrancarla y **Re-run jobs** |
-| Error de **TLS** al conectar | El secreto `KUBECONFIG_K3S` es de una instancia anterior. Regenerarlo |
-| Un pod en `Pending` con `Insufficient cpu` | El techo de 2 vCPU del laboratorio. Ver [despliegue-continuo.md](despliegue-continuo.md#qué-revisar-primero-cuando-falla) |
-| `emailservice` o `recommendationservice` con 1 reinicio | Esperable al arrancar los doce a la vez. Se estabiliza solo |
-| Todos en `ImagePullBackOff` | Algún paquete de `ghcr.io` dejó de ser público |
+| `InvalidClientTokenId` | Las llaves ya no sirven. [Cámbialas](#1-levantar-el-lab-y-cambiar-las-llaves) |
+| `RequestExpired` | Se acabó la sesión del lab. Seguramente la instancia está detenida. [Cambia las llaves](#1-levantar-el-lab-y-cambiar-las-llaves) |
+| `explicit deny` … `policy/voc-cancel-cred` | Lo mismo: AWS Academy bloqueó las llaves al cerrar la sesión. [Cámbialas](#1-levantar-el-lab-y-cambiar-las-llaves) |
+| `curl` regresa `000` | La instancia está apagada. Ve [cómo revisarlo](#revisar-si-la-instancia-está-encendida) |
+| El job falla en `Comprobar que el cluster responde` | La instancia está detenida. Enciéndela y dale **Re-run failed jobs** |
+| Error de TLS al conectar | El secreto `KUBECONFIG_K3S` es de una instancia anterior. Actualízalo |
+| Un pod en `Pending` con `Insufficient cpu` | El límite de 2 vCPU del lab. Ve [despliegue-continuo.md](despliegue-continuo.md#qué-revisar-primero-cuando-falla) |
+| `emailservice` o `recommendationservice` con 1 reinicio | Es normal cuando arrancan los doce al mismo tiempo. Se arregla solo |
+| Todos en `ImagePullBackOff` | Alguna imagen de `ghcr.io` dejó de ser pública |
 
 ---
 
-## Referencia rápida
+## Comandos rápidos
 
 ```bash
-# ¿Las llaves andan?
+# ¿Funcionan las llaves?
 aws sts get-caller-identity
 
-# ¿En qué estado está la instancia?
+# ¿Está encendida? Sin llaves y sin encenderla (200 = sí, 000 = no)
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 http://3.94.38.103/
+
+# ¿Cómo está la instancia? (necesita el lab abierto)
 aws ec2 describe-instances --filters "Name=tag:Name,Values=boutique-k3s" \
   --query 'Reservations[].Instances[].State.Name' --output text
 
-# Arrancar / detener
+# Encender / detener
 cd terraform/aws
 aws ec2 start-instances --instance-ids $(terraform output -raw instance_id)
 aws ec2 stop-instances  --instance-ids $(terraform output -raw instance_id)
@@ -253,13 +301,13 @@ cd terraform/aws && terraform output tienda_url
 # Entrar a la máquina (sin SSH)
 aws ssm start-session --target $(terraform output -raw instance_id)
 
-# Regenerar el secreto (solo tras recrear la instancia)
+# Actualizar el secreto (solo si creaste la instancia de nuevo)
 base64 -i ~/.kube/boutique-k3s.yaml | gh secret set KUBECONFIG_K3S \
   -R valentinodepaola/microservices-demo --env aws-k3s
 ```
 
-## Páginas relacionadas
+## Otras páginas
 
-- [despliegue-continuo.md](despliegue-continuo.md) — cómo funciona `cd-main.yaml` y qué revisar cuando falla
-- [`terraform/aws/README.md`](../terraform/aws/README.md) — qué crea el módulo y por qué
-- [ADR 0010](adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md) — por qué AWS, por qué k3s y no EKS, y qué se paga por ello
+- [despliegue-continuo.md](despliegue-continuo.md): cómo funciona `cd-main.yaml` y qué revisar cuando falla
+- [`terraform/aws/README.md`](../terraform/aws/README.md): qué crea el módulo y por qué
+- [ADR 0010](adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md): por qué AWS, por qué k3s y no EKS, y lo que cuesta esa decisión
