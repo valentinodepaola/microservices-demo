@@ -107,7 +107,7 @@ Tres cosas de `protojson` que en #24 conviene tener en cuenta:
 - Se escribe con `SET <llave> <valor> NX`. Si la llave ya existe, `RecordOrder` responde `AlreadyExists` en lugar de pisar el pedido anterior. Así lo de "se escribe una sola vez" del ADR 0005 no depende de que el código se porte bien.
 - Dato curioso que no afecta nada: `getRandomLetterCode` usa `rand.Intn(25)`, así que la `Z` nunca sale. No lo arreglamos aquí porque no es parte de esta tarjeta.
 
-Proponemos dejarle una nota al ADR 0004 que apunte a esta sección.
+Le dejamos una nota al ADR 0004 que apunta a esta sección.
 
 ---
 
@@ -272,4 +272,4 @@ Se calcula con las mismas fronteras de §4.2: CREATED empieza en `purchased_at`,
 ## Revisión
 
 - [ ] Lo revisó el otro integrante del equipo
-- [ ] Se le dejó la nota al ADR 0004 con la corrección de §2.2
+- [x] Se le dejó la nota al ADR 0004 con la corrección de §2.2
