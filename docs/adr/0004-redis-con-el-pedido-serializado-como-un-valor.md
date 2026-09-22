@@ -23,6 +23,8 @@ valor:  { order_id, tracking_id, fecha_compra,
           items: [ { product_id, cantidad, costo }, ... ] }
 ```
 
+> **Nota (#21):** la llave `"OS-4A9F21"` es solo ilustrativa y no corresponde al formato real. El tracking id que genera `shippingservice` tiene largo variable (`^[A-Z]{2}-\d+-\d+$`). El modelo definitivo del pedido, con su llave, está en [`docs/modelo-del-pedido.md` §2.2](../modelo-del-pedido.md#22-la-llave-y-un-error-en-el-adr-0004).
+
 Los artículos viven **dentro** del pedido, no en registros aparte. Una escritura al comprar, una lectura al consultar, cero uniones.
 
 **Los nombres e imágenes de producto no se guardan:** se resuelven contra `productcatalogservice` al pintar la pantalla, igual que ya hace la vista del carrito (`src/frontend/handlers.go:285`).
