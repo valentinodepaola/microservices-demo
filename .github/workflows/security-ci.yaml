@@ -30,7 +30,7 @@ jobs:
         timeout-minutes: 15
         run: |
           set -e
-          for MODULE in "frontend" "checkoutservice" "productcatalogservice" "shippingservice"; do
+          for MODULE in "frontend" "checkoutservice" "productcatalogservice" "shippingservice" "orderservice"; do
             echo "::group::$MODULE"
             pushd "src/$MODULE"
             govulncheck ./...
