@@ -92,7 +92,16 @@ func main() {
 	defer rdb.Close()
 
 	srv := grpc.NewServer()
-	svc := &server{orders: newStore(rdb)}
+	durations, err := durationsFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	svc := &server{
+		orders:    newStore(rdb),
+		durations: durations,
+		now:       time.Now,
+	}
 	pb.RegisterOrderServiceServer(srv, svc)
 
 	// Dos estados en el mismo health check:
@@ -117,7 +126,8 @@ func main() {
 		srv.GracefulStop()
 	}()
 
-	log.Infof("Order Service listening on port %s", port)
+	log.Infof("Order Service listening on port %s (stage durations: %v, %v, %v, %v)",
+		port, durations.Created, durations.Paid, durations.Preparing, durations.InTransit)
 
 	// Register reflection service on gRPC server.
 	reflection.Register(srv)
@@ -127,11 +137,12 @@ func main() {
 }
 
 // server controls RPC service responses.
-// Los RPC todavía no están implementados (eso es #23); el struct embebido
-// responde codes.Unimplemented mientras tanto.
 type server struct {
 	pb.UnimplementedOrderServiceServer
-	orders *store
+	orders    *store
+	durations Durations
+	// now se inyecta para que las pruebas fijen el instante de la consulta.
+	now func() time.Time
 }
 
 // requiredEnv regresa el valor de una variable de entorno obligatoria,

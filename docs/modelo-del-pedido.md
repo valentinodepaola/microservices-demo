@@ -17,7 +17,7 @@ Los ADR 0004 y 0005 ya dijeron *qué* hacer: Redis, el pedido completo como un s
 | D5 | ¿Guardamos el total? | **Sí** (`Order.total`) | `checkoutservice` ya lo calcula (`main.go:243-250`). Volver a sumarlo al consultar sería copiar la misma lógica en dos servicios. |
 | D6 | ¿Qué pasa si la fecha de compra sale en el futuro? | **Lo tratamos como `CREATED`**, no como error | Si el reloj de un pod anda desfasado unos segundos, la consulta no debería tronar por eso. |
 | D7 | ¿`DELIVERED` es el final del camino? | **Sí.** Ahí se queda para siempre | No manejamos cancelaciones ni devoluciones (ADR 0005). |
-| D8 | ¿Regresamos la línea de tiempo con fechas? | **Sí.** Hay que agregar un campo en el contrato de #6 (ver §6) | Es lo que sugiere el ADR 0005 para que se vea el avance aunque el pedido ya haya llegado. |
+| D8 | ¿Regresamos la línea de tiempo con fechas? | **Sí.** Ya está en el contrato, se agregó en #23 (ver §6) | Es lo que sugiere el ADR 0005 para que se vea el avance aunque el pedido ya haya llegado. |
 | D9 | En la frontera exacta entre dos etapas, ¿cuál gana? | **La siguiente.** Los intervalos son `[inicio, fin)` y se compara con `<` | Así un pedido que cae justo en el segundo del cambio tiene una sola respuesta correcta. |
 | D10 | ¿Cuál es la llave en Redis? | **El `shipping_tracking_id` tal cual**, sin prefijo, y se escribe con `SET … NX` | Redis es solo para esto, así que no hace falta prefijo. Y con `NX` es Redis el que se asegura de que el pedido se escriba una sola vez. |
 
@@ -224,9 +224,9 @@ Las reglas:
 
 ---
 
-## 6. La línea de tiempo (aviso para #6)
+## 6. La línea de tiempo
 
-Sí la vamos a regresar. Para eso hay que agregar esto a `TrackedOrder` en `protos/demo.proto`:
+Sí la regresamos. Ya quedó en `protos/demo.proto` (se agregó en #23, junto con los cinco valores del enum de §3):
 
 ```proto
 message StatusStep {
@@ -261,8 +261,8 @@ Se calcula con las mismas fronteras de §4.2: CREATED empieza en `purchased_at`,
 
 ## 8. Pendientes para otras tarjetas
 
-- **#6:** agregar los cinco valores de `OrderStatus` de §3, y `StatusStep` con `TrackedOrder.timeline` de §6.
-- **#23:** `checkoutservice` tiene que copiar `total` y `purchased_at_unix` (en UTC y en segundos) al `Order`. La consulta llama a `StatusAt` con el `now` truncado a segundos.
+- **#6:** ~~agregar los cinco valores de `OrderStatus` de §3, y `StatusStep` con `TrackedOrder.timeline` de §6~~ — hecho en #23.
+- **#12:** `checkoutservice` tiene que copiar `total` y `purchased_at_unix` (en UTC y en segundos) al `Order` que le manda a `RecordOrder`.
 - **#24:** la llave es el tracking id tal cual; se escribe con `SET … NX`; se usa `protojson` con `UseProtoNames` al escribir y con `DiscardUnknown` al leer.
 - **#28:** el *patch* de Kustomize con las cuatro variables de §5 en valores de demo.
 - **#13 / #25:** la tabla de §4.3 es básicamente el test.
