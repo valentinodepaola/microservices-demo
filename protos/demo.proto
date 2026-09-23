@@ -272,6 +272,11 @@ service OrderService {
 // El catálogo de valores lo define #21. En proto3 el 0 es el default implícito.
 enum OrderStatus {
     ORDER_STATUS_UNSPECIFIED = 0;
+    ORDER_STATUS_CREATED = 1;
+    ORDER_STATUS_PAID = 2;
+    ORDER_STATUS_PREPARING = 3;
+    ORDER_STATUS_IN_TRANSIT = 4;
+    ORDER_STATUS_DELIVERED = 5;
 }
 
 // Pedido completo, tal como lo guarda orderservice.
@@ -300,10 +305,18 @@ message GetOrderByTrackingIdRequest {
 }
 
 // Vista pública de la consulta: sin dirección de envío (ADR 0009, #11).
+message StatusStep {
+    OrderStatus status = 1;
+    // Segundos Unix en UTC en que empieza (o empezara) la etapa.
+    int64 starts_at_unix = 2;
+}
+
 message TrackedOrder {
     string shipping_tracking_id = 1;
     OrderStatus status = 2;
     repeated OrderItem items = 3;
     int64 purchased_at_unix = 4;
     Money total = 5;
+    // Las cinco etapas en orden, incluidas las que todavia no llegan.
+    repeated StatusStep timeline = 6;
 }
