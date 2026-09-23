@@ -137,8 +137,6 @@ func main() {
 }
 
 // server controls RPC service responses.
-// Los RPC todavía no están implementados (eso es #23); el struct embebido
-// responde codes.Unimplemented mientras tanto.
 type server struct {
 	pb.UnimplementedOrderServiceServer
 	orders    *store
