@@ -92,7 +92,7 @@ func main() {
 	defer rdb.Close()
 
 	srv := grpc.NewServer()
-	svc := &server{rdb: rdb}
+	svc := &server{orders: newStore(rdb)}
 	pb.RegisterOrderServiceServer(srv, svc)
 
 	// Dos estados en el mismo health check:
@@ -131,7 +131,7 @@ func main() {
 // responde codes.Unimplemented mientras tanto.
 type server struct {
 	pb.UnimplementedOrderServiceServer
-	rdb *redis.Client
+	orders *store
 }
 
 // requiredEnv regresa el valor de una variable de entorno obligatoria,

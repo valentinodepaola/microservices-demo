@@ -22,6 +22,14 @@ El servicio registra el health check estándar de gRPC con dos nombres:
 
 Si Redis se cae, el servicio deja de estar listo pero no se reinicia, y vuelve solo en cuanto Redis regresa.
 
+## Persistencia
+
+Cada pedido se guarda como un solo valor en `redis-orders`, bajo la llave de su número de rastreo y en JSON generado desde el proto ([modelo del pedido](../../docs/modelo-del-pedido.md)). La escritura usa `SET NX`, así que registrar dos veces el mismo número no duplica ni sobrescribe nada.
+
+El estado del pedido no se guarda: se calcula al consultar.
+
+> ⚠️ **Los pedidos no sobreviven al pod.** `redis-orders` usa `emptyDir`, así que si el pod se recrea se pierden todos y un número de rastreo que antes funcionaba empieza a responder `NotFound`. Es aceptable para una demostración de una sesión, pero no es almacenamiento duradero. Las llaves tampoco expiran: ver el [README del componente](../../kustomize/components/order-tracking/README.md).
+
 ## Local
 
 Con un Redis corriendo en `localhost:6379`:
