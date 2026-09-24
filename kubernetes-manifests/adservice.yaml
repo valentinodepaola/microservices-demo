@@ -51,7 +51,12 @@ spec:
           value: "9555"
         resources:
           requests:
-            cpu: 200m
+            # Se midio 7m de uso el 23/09/26
+            # Antes teniamos 200m el upstream lo pedia
+            # Se bajo porque el rolling update necesita lugar para que el pod viejo
+            # y el nuevo convivan un momento, y con orderservice y redis-orders ya
+            # no alcanzaba. Ver #71.
+            cpu: 100m
             memory: 180Mi
           limits:
             cpu: 300m
