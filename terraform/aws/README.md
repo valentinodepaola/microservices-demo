@@ -160,7 +160,7 @@ Ambas ofrecen 2 vCPU y 8 GiB. La familia `t3` es *burstable*: entrega una línea
 
 La suma de `resources.requests` de `kustomize/base/` es de **1.57 vCPU y 1.34 GiB**; los `limits` suman 2.83 vCPU y 2.48 GiB. Con el techo de 2 vCPU la memoria sobra y la CPU queda ajustada, sobre todo al sumar el componente de observabilidad y, más adelante, `orderservice` y `redis-orders`.
 
-Palancas disponibles, en orden de preferencia: k3s ya arranca con `--disable=traefik` (Traefik ocupaba el puerto 80 que necesita el ServiceLB para publicar la tienda), y si hiciera falta más margen, recortar los `requests` de los servicios menos exigentes. **Retirar el `loadgenerator` es el último recurso**, porque los dos *smoke tests* de `cd-main.yaml` leen sus registros para contar peticiones y errores.
+Palancas disponibles, en orden de preferencia: k3s ya arranca con `--disable=traefik` (Traefik ocupaba el puerto 80 que necesita el ServiceLB para publicar la tienda), y si hiciera falta más margen, recortar los `requests` de los servicios menos exigentes. Ese recorte ya se aplicó en #71 sobre `kubernetes-manifests/`: los servicios desplegados reservan 1.17 vCPU, y el detalle está en `docs/despliegue-continuo.md`. **Retirar el `loadgenerator` es el último recurso**, porque los dos *smoke tests* de `cd-main.yaml` leen sus registros para contar peticiones y errores.
 
 ## Validación automática
 
