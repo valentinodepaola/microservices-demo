@@ -64,7 +64,8 @@ adService:
   name: adservice
   resources:
     requests:
-      cpu: 200m
+      # Upstream pedia 200m. Ver #71.
+      cpu: 100m
       memory: 180Mi
     limits:
       cpu: 300m
@@ -75,7 +76,8 @@ cartService:
   name: cartservice
   resources:
     requests:
-      cpu: 200m
+      # Upstream pedia 200m. Ver #71.
+      cpu: 100m
       memory: 128Mi
     limits:
       cpu: 300m
@@ -145,7 +147,8 @@ loadGenerator:
   checkFrontendInitContainer: true
   resources:
     requests:
-      cpu: 300m
+      # Upstream pedia 300m. Ver #71.
+      cpu: 100m
       memory: 256Mi
     limits:
       cpu: 500m

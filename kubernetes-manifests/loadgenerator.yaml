@@ -41,6 +41,10 @@ spec:
   # se pasa del margen, y porque es el unico donde la indisponibilidad no
   # importa: genera trafico sintetico, no lo consume nadie. El frontend
   # conserva su despliegue sin hueco.
+  #
+  # Desde #71 pide 100m y no 300m, asi que ya cabria al lado de si mismo.
+  # Aun asi maxSurge 0 se queda a proposito: aqui no importa quedarse un
+  # momento sin pod, y quitarlo es otro cambio con su propio riesgo.
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -111,7 +115,12 @@ spec:
           value: "1"
         resources:
           requests:
-            cpu: 300m
+            # Se midio 4m de uso el 23/09/26
+            # Antes teniamos 300m el upstream lo pedia
+            # Se bajo para liberar margen en el nodo: los demas servicios lo
+            # necesitan para su rolling update, y con orderservice y redis-orders
+            # ya no alcanzaba. Ver #71.
+            cpu: 100m
             memory: 256Mi
           limits:
             cpu: 500m
