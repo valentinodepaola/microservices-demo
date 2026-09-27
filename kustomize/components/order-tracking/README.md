@@ -2,7 +2,23 @@
 
 Despliega la funcionalidad de seguimiento de pedidos, que es opcional ([ADR 0007](../../../docs/adr/0007-componente-opcional-con-kill-switch.md)). Sin este componente, el despliegue por defecto no levanta nada de seguimiento.
 
-Hoy contiene `redis-orders`, la instancia de Redis dedicada a los pedidos (#24). El `orderservice`, el perfil de Skaffold y los parches al `frontend` y al `checkoutservice` los agrega #28.
+Contiene dos piezas:
+
+- **`redis-orders`**: la instancia de Redis dedicada a los pedidos (#24).
+- **`orderservice`**: el servicio de pedidos, con su Deployment, su Service `ClusterIP` en el 50051 y su ServiceAccount (#26). Solo lo llaman `checkoutservice` y `frontend` desde dentro del clúster, así que no se expone hacia afuera.
+
+Encender el componente en Skaffold, en Helm y en el CD, y los parches al `frontend` y al `checkoutservice`, los agrega #28. Mientras eso no esté, la imagen `orderservice` no se publica en `ghcr.io`, y activar el componente a mano en el clúster deja el pod en `ImagePullBackOff`.
+
+## Cómo sabe Kubernetes si `orderservice` está sano
+
+Las dos sondas le preguntan al mismo health check de gRPC, pero de forma distinta:
+
+| Sonda | Pregunta por | Si Redis se cae |
+|---|---|---|
+| readiness | `hipstershop.OrderService` | Responde `NOT_SERVING`: el pod deja de recibir tráfico, pero sigue vivo |
+| liveness | nada (el proceso) | Sigue en `SERVING`: el pod no se reinicia, porque reiniciarlo no arreglaría a Redis |
+
+Cuando Redis vuelve, el servicio lo detecta en unos 5 segundos y vuelve a `SERVING` solo.
 
 ## Uso
 
@@ -34,7 +50,14 @@ Las llaves tampoco tienen tiempo de expiración: un pedido registrado se puede c
 ## Comprobaciones
 
 ```
-kubectl get pods                                      # redis-orders en Running y 1/1
+kubectl get pods                                      # redis-orders y orderservice en Running y 1/1
 kubectl exec deploy/redis-orders -- redis-cli PING    # PONG
 kubectl exec deploy/redis-orders -- redis-cli DBSIZE  # cuántos pedidos hay
+```
+
+El `1/1` de `orderservice` ya quiere decir que su readiness respondió `SERVING`, o sea que llega a Redis. Para preguntarle directo (la imagen es distroless y no trae shell, así que se hace desde afuera):
+
+```
+kubectl port-forward deploy/orderservice 50051:50051
+grpcurl -plaintext -d '{"service":"hipstershop.OrderService"}' localhost:50051 grpc.health.v1.Health/Check
 ```
