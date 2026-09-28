@@ -1,0 +1,103 @@
+# Copyright 2018 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orderservice
+  labels:
+    app: orderservice
+spec:
+  selector:
+    matchLabels:
+      app: orderservice
+  template:
+    metadata:
+      labels:
+        app: orderservice
+    spec:
+      serviceAccountName: orderservice
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+      - name: server
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          privileged: false
+          readOnlyRootFilesystem: true
+        image: orderservice
+        ports:
+        - containerPort: 50051
+        env:
+        - name: PORT
+          value: "50051"
+        # Obligatoria: sin ella el servicio no arranca.
+        - name: REDIS_ADDR
+          value: "redis-orders:6379"
+        # Readiness pregunta por el servicio: si Redis se cae responde
+        # NOT_SERVING y el pod deja de recibir tráfico.
+        readinessProbe:
+          periodSeconds: 5
+          grpc:
+            port: 50051
+            service: hipstershop.OrderService
+        # Liveness pregunta sin servicio: solo mira que el proceso responda.
+        # Así una caída de Redis no reinicia el pod, que no la arreglaría.
+        livenessProbe:
+          grpc:
+            port: 50051
+        resources:
+          # Medido en local el 26/09/26 con docker stats, cargándolo con ghz:
+          #   reposo: 0m y 49Mi
+          #   10 rps por RPC: 24m (pico 34m) y 60Mi
+          #   200 rps por RPC: 221m (pico 250m) y 62Mi
+          #   sin freno: pico 76Mi
+          # El loadgenerator hace unas 0.1 compras por segundo, así que el
+          # request de CPU queda en el piso de 50m que pidió #71.
+          # El limit de CPU solo frena por encima de ~150 rps; el de memoria
+          # deja holgura sobre el pico porque pasarlo mata el pod.
+          # Se midió en arm64; volver a medir con kubectl top pods en el
+          # clúster cuando #28 lo encienda.
+          requests:
+            cpu: 50m
+            memory: 80Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orderservice
+  labels:
+    app: orderservice
+spec:
+  type: ClusterIP
+  selector:
+    app: orderservice
+  ports:
+  - name: grpc
+    port: 50051
+    targetPort: 50051
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: orderservice

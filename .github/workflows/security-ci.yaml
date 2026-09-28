@@ -38,6 +38,29 @@ jobs:
             echo "::endgroup::"
           done
 
+  trivy-orderservice:
+    name: "Vulnerabilidades en la imagen de orderservice"
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Construir la imagen
+        run: docker build -t orderservice:scan src/orderservice
+
+      # Solo orderservice: los servicios que venian de Google no los vamos
+      # a corregir, y un escaneo lleno de avisos sin atender se ignora.
+      # Fijado a un commit y no a un tag, porque un tag se puede mover.
+      - name: Escanear la imagen
+        timeout-minutes: 15
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: orderservice:scan
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: 1
+
   gitleaks:
     name: "Deteccion de secretos"
     runs-on: ubuntu-24.04
