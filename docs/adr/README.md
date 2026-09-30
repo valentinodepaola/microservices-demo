@@ -18,6 +18,7 @@ El razonamiento sale de la propuesta de proyecto del equipo, que se entrega por 
 | [0008](0008-despliegue-continuo-en-dos-fases.md) | Despliegue continuo en dos fases | Aceptada · fase B reemplazada por 0010 | **pipeline-de-despliegue-continuo** |
 | [0009](0009-consulta-anonima-sin-autenticacion.md) | La consulta de seguimiento es anónima | Aceptada | Propuesta §1.3 |
 | [0010](0010-fase-b-en-aws-con-k3s-sobre-ec2.md) | La fase B se despliega en AWS, con k3s sobre EC2 | Aceptada | **opciones-de-despliegue-en-la-nube** |
+| [0011](0011-secretos-del-pipeline-en-vault.md) | Los secretos del pipeline se guardan en Vault, en su propia máquina | Aceptada | Presentación de la Fase 3 |
 
 ## Las reglas
 
@@ -49,7 +50,7 @@ Qué se eligió, en voz activa.
 
 ## Fechas
 
-Reflejan **cuándo quedó registrada** la decisión, no necesariamente cuándo se discutió por primera vez. Los ADR 0001 a 0007 y el 0009 documentan decisiones que ya estaban tomadas en la **propuesta de proyecto**; el 0008 se registró junto con el diseño del pipeline, y el 0010 el día en que el proveedor de nube quedó fijado por la institución.
+Reflejan **cuándo quedó registrada** la decisión, no necesariamente cuándo se discutió por primera vez. Los ADR 0001 a 0007 y el 0009 documentan decisiones que ya estaban tomadas en la **propuesta de proyecto**; el 0008 se registró junto con el diseño del pipeline, el 0010 el día en que el proveedor de nube quedó fijado por la institución, y el 0011 al arrancar la Fase 3.
 
 ## Páginas relacionadas
 
