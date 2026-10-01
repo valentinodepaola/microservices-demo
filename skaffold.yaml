@@ -47,6 +47,12 @@ build:
     context: src/frontend
   - image: adservice
     context: src/adservice
+  # orderservice va al final a propósito: los perfiles debug y local-arm64
+  # parchan artefactos por posición (/build/artifacts/N) y meterlo en medio
+  # los correría. Se construye siempre, pero solo se despliega con el perfil
+  # order-tracking (#28).
+  - image: orderservice
+    context: src/orderservice
   tagPolicy:
     gitCommit: {}
   local:
@@ -92,6 +98,18 @@ profiles:
   - op: add
     path: /manifests/kustomize/paths/1
     value: kustomize/components/network-policies
+# The "order-tracking" profile turns on the order tracking feature (ADR 0007):
+# orderservice, redis-orders and the patches to frontend and checkoutservice.
+# Without it, skaffold run deploys the store exactly as before.
+#     skaffold run -p order-tracking
+# It replaces kubernetes-manifests with an overlay instead of adding a second
+# path like network-policies does, because its patches need frontend and
+# checkoutservice in the same kustomize build (see the overlay's comments).
+- name: order-tracking
+  patches:
+  - op: replace
+    path: /manifests/kustomize/paths/0
+    value: kustomize/overlays/order-tracking
 - name: local-arm64
   activation:
   - kubeContext: docker-desktop
