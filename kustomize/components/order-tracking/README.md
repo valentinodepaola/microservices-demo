@@ -7,7 +7,21 @@ Contiene dos piezas:
 - **`redis-orders`**: la instancia de Redis dedicada a los pedidos (#24).
 - **`orderservice`**: el servicio de pedidos, con su Deployment, su Service `ClusterIP` en el 50051 y su ServiceAccount (#26). Solo lo llaman `checkoutservice` y `frontend` desde dentro del clúster, así que no se expone hacia afuera.
 
-Encender el componente en Skaffold, en Helm y en el CD, y los parches al `frontend` y al `checkoutservice`, los agrega #28. Mientras eso no esté, la imagen `orderservice` no se publica en `ghcr.io`, y activar el componente a mano en el clúster deja el pod en `ImagePullBackOff`.
+Además, el componente **parcha** dos Deployments y ajusta un tercero (#28):
+
+- **`frontend`** y **`checkoutservice`**: les inyecta `ENABLE_ORDER_TRACKING=true` y `ORDER_SERVICE_ADDR=orderservice:50051`. Sin el componente no tienen esas variables y se comportan como siempre.
+- **`orderservice`**: le pone las duraciones de demo (`30s`, `60s`, `90s`, `120s`; el ciclo completo dura 5 minutos). Sin este parche usaría los defaults de modo revisión, que suman casi un día ([modelo del pedido §5](../../../docs/modelo-del-pedido.md)).
+
+## Dónde se enciende
+
+| Ruta | Apagado (default) | Encendido |
+|---|---|---|
+| Kustomize | `kubectl apply -k kustomize/` | descomentar `components/order-tracking` en `kustomize/kustomization.yaml` |
+| Skaffold | `skaffold run` | `skaffold run -p order-tracking` |
+| Helm | `helm install …` | `--set orderTracking.enabled=true` |
+| CD (`cd-main.yaml`) | — | siempre encendido: despliega con `-p order-tracking` |
+
+El perfil de Skaffold no apunta a este componente directo: renderiza `kustomize/overlays/order-tracking/`, que es `kubernetes-manifests/` con el componente encima. Los parches necesitan a `frontend` y `checkoutservice` en la misma pasada de kustomize, y `skaffold.yaml` construye `kubernetes-manifests/`, no `kustomize/`.
 
 ## Cómo sabe Kubernetes si `orderservice` está sano
 
