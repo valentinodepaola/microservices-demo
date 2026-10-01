@@ -110,6 +110,12 @@ spec:
             value: "{{ .Values.shoppingAssistantService.name }}:80"
           - name: ENV_PLATFORM
             value: {{ .Values.frontend.platform | quote }}
+          {{- if .Values.orderTracking.enabled }}
+          - name: ENABLE_ORDER_TRACKING
+            value: "true"
+          - name: ORDER_SERVICE_ADDR
+            value: "{{ .Values.orderTracking.orderService.name }}:50051"
+          {{- end }}
           {{- if .Values.opentelemetryCollector.create }}
           - name: COLLECTOR_SERVICE_ADDR
             value: "{{ .Values.opentelemetryCollector.name }}:4317"
