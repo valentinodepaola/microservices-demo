@@ -63,7 +63,8 @@ jobs:
         timeout-minutes: 10
         run: dotnet test src/cartservice/
 
-  # Construye las doce imagenes y las publica en ghcr.io etiquetadas con el
+  # Construye las trece imagenes (doce de la tienda + orderservice, #28) y
+  # las publica en ghcr.io etiquetadas con el
   # commit. Va entre pruebas y deploy porque sin registro no hay despliegue:
   # el cluster remoto no comparte almacen de imagenes con nadie, asi que la
   # unica forma que tiene de conseguirlas es bajarlas de ahi.
@@ -105,7 +106,7 @@ jobs:
         # produjo. Con ese indice, skaffold reconoce lo que no cambio y lo
         # reetiqueta en el registro en vez de reconstruirlo.
         #
-        # Sin esto, cada merge reconstruye los doce aunque no se haya tocado
+        # Sin esto, cada merge reconstruye las trece aunque no se haya tocado
         # una linea de los servicios. Medido: 7m39s en 82d986f y 8m38s en
         # af2941f, dos merges que solo cambiaron workflows y documentacion.
         #
@@ -144,7 +145,7 @@ jobs:
           # cache tibia, un merge que no toca codigo de los servicios deberia
           # bajar de los ~8 min que costaba reconstruirlos todos.
           DURACION=$(( $(date +%s) - INICIO_BUILD ))
-          # build.json lista los doce siempre, construidos o solo reetiquetados
+          # build.json lista las trece siempre, construidos o solo reetiquetados
           # — no sirve para saber cuantos se reconstruyeron. Va como conteo de
           # lo publicado, que es lo que el criterio uno pide demostrar.
           PUBLICADAS=$(jq -r '.builds | length' build.json)
@@ -163,7 +164,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publicar el indice de lo construido
-        # El puente entre este job y deploy. build.json lista los doce
+        # El puente entre este job y deploy. build.json lista los trece
         # artefactos con su tag en ghcr.io, y es lo que deploy consume con
         # `skaffold deploy --build-artifacts` para aplicar sin reconstruir.
         #
@@ -280,15 +281,25 @@ jobs:
         # El profile local-arm64 de skaffold.yaml queda inactivo solo: se
         # activa por kubeContext == docker-desktop. Es lo correcto, el nodo
         # es x86_64.
-        run: skaffold deploy --build-artifacts=build.json
+        #
+        # -p order-tracking enciende el seguimiento de pedidos (#28): cambia
+        # kubernetes-manifests/ por kustomize/overlays/order-tracking, que
+        # agrega orderservice y redis-orders y parcha frontend y
+        # checkoutservice. Sin el perfil, el CD seguiria saliendo en verde
+        # con la tienda de siempre y el seguimiento nunca llegaria al
+        # servidor. Para apagarlo en el CD basta quitar el -p.
+        run: skaffold deploy -p order-tracking --build-artifacts=build.json
 
       - name: Esperar a que los Deployments esten disponibles
+        # orderservice y redis-orders entran con el perfil order-tracking.
+        # Hay que esperarlos aqui: si no, el smoke test de DBSIZE puede correr
+        # antes de que Redis este listo y fallar por una carrera, no por un bug.
         run: |
           set -euo pipefail
           for d in adservice cartservice checkoutservice currencyservice \
-                   emailservice frontend loadgenerator paymentservice \
-                   productcatalogservice recommendationservice \
-                   redis-cart shippingservice; do
+                   emailservice frontend loadgenerator orderservice \
+                   paymentservice productcatalogservice recommendationservice \
+                   redis-cart redis-orders shippingservice; do
             kubectl wait --for=condition=available --timeout=600s deployment/$d
           done
 
@@ -333,6 +344,30 @@ jobs:
           echo "Peticiones: $REQUEST_COUNT · errores: $ERROR_COUNT"
           [ "$ERROR_COUNT" -eq 0 ]
 
+      - name: Smoke test - los pedidos llegan a redis-orders
+        # Comprueba el camino completo checkout -> orderservice -> Redis (#28).
+        # El loadgenerator hace unas 0.1 compras por segundo, asi que despues
+        # del smoke test anterior ya deberia haber pedidos; si no, se le dan
+        # hasta 3 minutos mas antes de dar el despliegue por roto.
+        #
+        # redis-orders corre sin contrasena. Cuando entre #79, redis-cli
+        # necesita -a (o REDISCLI_AUTH) o este paso responde NOAUTH.
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          PEDIDOS=0
+          for i in $(seq 1 36); do
+            PEDIDOS=$(kubectl exec deploy/redis-orders -- redis-cli DBSIZE | tr -dc "0-9" || true)
+            PEDIDOS=${PEDIDOS:-0}
+            [ "$PEDIDOS" -gt 0 ] && break
+            sleep 5
+          done
+          echo "Pedidos en redis-orders: $PEDIDOS"
+          if [ "$PEDIDOS" -eq 0 ]; then
+            echo "::error::redis-orders sigue vacio despues del trafico del loadgenerator. Revisar 'kubectl logs deploy/checkoutservice' y 'kubectl logs deploy/orderservice'."
+            exit 1
+          fi
+
       - name: Rollback automatico
         id: rollback
         # Corre si el paso Desplegar llego a EJECUTARSE, salga bien o mal.
@@ -350,11 +385,13 @@ jobs:
         # skipped y no se intenta revertir nada contra una instancia apagada.
         if: failure() && steps.deploy.outcome != 'skipped'
         run: |
-          # redis-cart queda fuera a proposito: usa redis:alpine, imagen fija,
-          # no genera revision nueva en cada despliegue.
+          # redis-cart y redis-orders quedan fuera a proposito: usan
+          # redis:alpine, imagen fija, no generan revision nueva en cada
+          # despliegue.
           for d in adservice cartservice checkoutservice currencyservice \
-                   emailservice frontend loadgenerator paymentservice \
-                   productcatalogservice recommendationservice shippingservice; do
+                   emailservice frontend loadgenerator orderservice \
+                   paymentservice productcatalogservice recommendationservice \
+                   shippingservice; do
             kubectl rollout undo deployment/$d || true
           done
           for d in frontend checkoutservice cartservice; do
