@@ -21,6 +21,7 @@ components:
 # - components/google-cloud-operations
 # - components/memorystore
 # - components/network-policies
+# - components/order-tracking
 # - components/non-public-frontend
 # - components/service-accounts
 # - components/alloydb
