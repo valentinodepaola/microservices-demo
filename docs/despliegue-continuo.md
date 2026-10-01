@@ -34,7 +34,7 @@ Ahora todo vive en `cd-main.yaml`, como tres jobs encadenados con `needs:`:
 | Job | Dónde corre | Qué hace |
 |---|---|---|
 | `pruebas` | `ubuntu-24.04`, en la nube | Pruebas de Go (`shippingservice`, `productcatalogservice`, `frontend/validator`) y `dotnet test src/cartservice/` |
-| `imagenes` | `ubuntu-24.04`, en la nube | Construye los doce artefactos de Skaffold para `linux/amd64` y los publica en `ghcr.io`, etiquetados con el SHA |
+| `imagenes` | `ubuntu-24.04`, en la nube | Construye los trece artefactos de Skaffold (doce de la tienda y `orderservice`) para `linux/amd64` y los publica en `ghcr.io`, etiquetados con el SHA |
 | `deploy` | `ubuntu-24.04`, en la nube | Todo lo demás: kubeconfig, despliegue, espera, smoke test y rollback |
 
 **Si algo falla antes, `deploy` sale como omitido (*skipped*) y no llega a tocar el clúster.** La versión que está desplegada sigue en pie y no hay nada que revertir.
@@ -48,7 +48,7 @@ Ahora todo vive en `cd-main.yaml`, como tres jobs encadenados con `needs:`:
 
 ## El registro de imágenes: se construye una vez y se despliega eso mismo
 
-Desde el issue #45, cada merge a `main` publica las doce imágenes en `ghcr.io/valentinodepaola`, etiquetadas con el SHA del commit. Lo hace el job `imagenes`, que se autentica con el `GITHUB_TOKEN` que el propio workflow ya recibe: no hay ningún secreto que administrar ni que rotar.
+Desde el issue #45, cada merge a `main` publica las imágenes en `ghcr.io/valentinodepaola`, etiquetadas con el SHA del commit. Lo hace el job `imagenes`, que se autentica con el `GITHUB_TOKEN` que el propio workflow ya recibe: no hay ningún secreto que administrar ni que rotar.
 
 **Construye para `linux/amd64` y nada más**, porque el nodo de k3s es una EC2 `x86_64`. Construir además la variante `arm64` obligaría a emular con QEMU sobre un runner x86, y no la usaría nadie.
 
@@ -80,6 +80,20 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $T" \
 ```
 
 `200` es público. `401` o `403` significa que hay que voltearlo en la configuración del paquete.
+
+**`orderservice` es el paquete número trece** y nace en el primer merge de #28. Según la documentación de GitHub los paquetes nuevos nacen privados; los doce de antes salieron públicos, y lo más probable es que este también, pero hay que comprobarlo con el mismo comando cambiando `frontend` por `orderservice`. Si quedó privado, `orderservice` se queda en `ImagePullBackOff` y el CD falla en *Esperar a que los Deployments esten disponibles*.
+
+## El seguimiento de pedidos en el CD
+
+El paso *Desplegar* corre `skaffold deploy -p order-tracking`. El perfil cambia `kubernetes-manifests/` por `kustomize/overlays/order-tracking/`, que agrega `orderservice` y `redis-orders` y parcha `frontend` y `checkoutservice` con `ENABLE_ORDER_TRACKING=true` ([ADR 0007](adr/0007-componente-opcional-con-kill-switch.md), #28). Las duraciones de cada etapa salen en modo demo: el ciclo completo dura 5 minutos.
+
+Con el perfil vienen tres cambios más en el workflow:
+
+- `orderservice` y `redis-orders` están en la lista de *Esperar a que los Deployments esten disponibles*. Si no, el smoke test de abajo podría correr antes de que Redis esté listo y fallar por una carrera.
+- `orderservice` está en la lista del *Rollback automatico*. `redis-orders` no, por la misma razón que `redis-cart`: su imagen es fija.
+- Un segundo smoke test, *los pedidos llegan a redis-orders*, revisa con `redis-cli DBSIZE` que después del tráfico del `loadgenerator` haya al menos un pedido guardado. Eso comprueba el camino checkout → `orderservice` → Redis. Cuando #79 le ponga contraseña a `redis-orders`, este paso tiene que pasarla o responde `NOAUTH`.
+
+Para desplegar sin seguimiento basta con quitar `-p order-tracking` del paso *Desplegar* (y el segundo smoke test, que fallaría siempre).
 
 ## La caché de artefactos de Skaffold
 
