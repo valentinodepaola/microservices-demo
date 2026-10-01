@@ -92,6 +92,12 @@ spec:
           value: "{{ .Values.currencyService.name }}:7000"
         - name: CART_SERVICE_ADDR
           value: "{{ .Values.cartService.name }}:7070"
+        {{- if .Values.orderTracking.enabled }}
+        - name: ENABLE_ORDER_TRACKING
+          value: "true"
+        - name: ORDER_SERVICE_ADDR
+          value: "{{ .Values.orderTracking.orderService.name }}:50051"
+        {{- end }}
         {{- if .Values.opentelemetryCollector.create }}
         - name: COLLECTOR_SERVICE_ADDR
           value: "{{ .Values.opentelemetryCollector.name }}:4317"
