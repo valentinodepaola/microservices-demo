@@ -43,3 +43,10 @@ jobs:
               echo "## kustomize build for " + $test
               kustomize build $test
           done
+      # El overlay que renderiza el perfil order-tracking de skaffold.yaml (#28).
+      - name: kustomize build overlays
+        run: |
+          for overlay in kustomize/overlays/*/; do
+              echo "## kustomize build for $overlay"
+              kustomize build $overlay
+          done
