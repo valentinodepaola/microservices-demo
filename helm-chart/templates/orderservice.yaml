@@ -1,0 +1,244 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Seguimiento de pedidos (#28, ADR 0007). Apagado por defecto: con
+# orderTracking.enabled=false este archivo no genera nada y la tienda sale
+# igual que antes. Es el equivalente de kustomize/components/order-tracking.
+{{- if .Values.orderTracking.enabled }}
+{{- if .Values.serviceAccounts.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.orderTracking.orderService.name }}
+  namespace: {{ .Release.Namespace }}
+  {{- if not .Values.serviceAccounts.annotationsOnlyForCartservice }}
+  {{- with .Values.serviceAccounts.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.orderTracking.orderService.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.orderTracking.orderService.name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.orderTracking.orderService.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.orderTracking.orderService.name }}
+    spec:
+      {{- if .Values.serviceAccounts.create }}
+      serviceAccountName: {{ .Values.orderTracking.orderService.name }}
+      {{- else }}
+      serviceAccountName: default
+      {{- end }}
+      {{- if .Values.securityContext.enable }}
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        {{- if .Values.seccompProfile.enable }}
+        seccompProfile:
+          type: {{ .Values.seccompProfile.type }}
+        {{- end }}
+      {{- end }}
+      containers:
+      - name: server
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          privileged: false
+          readOnlyRootFilesystem: true
+        image: {{ .Values.images.repository }}/{{ .Values.orderTracking.orderService.name }}:{{ .Values.images.tag | default .Chart.AppVersion }}
+        ports:
+        - containerPort: 50051
+        readinessProbe:
+          periodSeconds: 5
+          grpc:
+            port: 50051
+            service: hipstershop.OrderService
+        livenessProbe:
+          grpc:
+            port: 50051
+        env:
+        - name: PORT
+          value: "50051"
+        - name: REDIS_ADDR
+          value: "{{ .Values.orderTracking.redis.name }}:6379"
+        {{- with .Values.orderTracking.durations }}
+        - name: ORDER_CREATED_DURATION
+          value: {{ .created | quote }}
+        - name: ORDER_PAID_DURATION
+          value: {{ .paid | quote }}
+        - name: ORDER_PREPARING_DURATION
+          value: {{ .preparing | quote }}
+        - name: ORDER_IN_TRANSIT_DURATION
+          value: {{ .inTransit | quote }}
+        {{- end }}
+        resources:
+          {{- toYaml .Values.orderTracking.orderService.resources | nindent 10 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.orderTracking.orderService.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.orderTracking.orderService.name }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Values.orderTracking.orderService.name }}
+  ports:
+  - name: grpc
+    port: 50051
+    targetPort: 50051
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.orderTracking.redis.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.orderTracking.redis.name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.orderTracking.redis.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.orderTracking.redis.name }}
+    spec:
+      {{- if .Values.securityContext.enable }}
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        {{- if .Values.seccompProfile.enable }}
+        seccompProfile:
+          type: {{ .Values.seccompProfile.type }}
+        {{- end }}
+      {{- end }}
+      containers:
+      - name: redis
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          privileged: false
+          readOnlyRootFilesystem: true
+        image: redis:alpine
+        ports:
+        - containerPort: 6379
+        readinessProbe:
+          periodSeconds: 5
+          tcpSocket:
+            port: 6379
+        livenessProbe:
+          periodSeconds: 5
+          tcpSocket:
+            port: 6379
+        volumeMounts:
+        - mountPath: /data
+          name: redis-data
+        resources:
+          {{- toYaml .Values.orderTracking.redis.resources | nindent 10 }}
+      volumes:
+      # Igual que redis-cart: los pedidos viven mientras viva el pod.
+      - name: redis-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.orderTracking.redis.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.orderTracking.redis.name }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Values.orderTracking.redis.name }}
+  ports:
+  - name: tcp-redis
+    port: 6379
+    targetPort: 6379
+{{- if .Values.networkPolicies.create }}
+---
+# Con networkPolicies.create, common.yaml pone un deny-all: sin estas dos,
+# frontend y checkoutservice no llegarían a orderservice, ni este a Redis.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.orderTracking.orderService.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.orderTracking.orderService.name }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: {{ .Values.frontend.name }}
+    - podSelector:
+        matchLabels:
+          app: {{ .Values.checkoutService.name }}
+    ports:
+     - port: 50051
+       protocol: TCP
+  egress:
+  - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Values.orderTracking.redis.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Values.orderTracking.redis.name }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: {{ .Values.orderTracking.orderService.name }}
+    ports:
+     - port: 6379
+       protocol: TCP
+  egress:
+  - {}
+{{- end }}
+{{- end }}
