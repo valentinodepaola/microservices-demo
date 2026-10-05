@@ -16,6 +16,12 @@ variable "instance_type" {
   default     = "m5.large"
 }
 
+variable "vault_instance_type" {
+  description = "Tipo de instancia de la maquina de Vault. Aqui si sirve una t3, aunque el nodo la descarta: Vault pasa casi todo el tiempo sin hacer nada, asi que no se le acaban los creditos de CPU"
+  type        = string
+  default     = "t3.small"
+}
+
 variable "vpc_cidr" {
   description = "Rango de direcciones privadas de la VPC"
   type        = string
