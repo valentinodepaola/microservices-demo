@@ -170,11 +170,11 @@ Es el mismo comando que corre el workflow.
 
 ## Terminar el día
 
-Hay que detener la instancia, no destruirla.
+Hay que detener las instancias, no destruirlas. Desde la Fase 3 son dos: el nodo de k3s y la máquina de Vault.
 
 ```bash
 cd terraform/aws
-aws ec2 stop-instances --instance-ids $(terraform output -raw instance_id)
+aws ec2 stop-instances --instance-ids $(terraform output -raw instance_id) $(terraform output -raw vault_instance_id)
 ```
 
 ### Por qué detenerla y no destruirla
@@ -293,7 +293,7 @@ aws ec2 describe-instances --filters "Name=tag:Name,Values=boutique-k3s" \
 # Encender / detener
 cd terraform/aws
 aws ec2 start-instances --instance-ids $(terraform output -raw instance_id)
-aws ec2 stop-instances  --instance-ids $(terraform output -raw instance_id)
+aws ec2 stop-instances  --instance-ids $(terraform output -raw instance_id) $(terraform output -raw vault_instance_id)
 
 # ¿Dónde está la tienda?
 cd terraform/aws && terraform output tienda_url
