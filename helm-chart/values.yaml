@@ -216,6 +216,39 @@ cartDatabase:
     endpointPort: ""
     certificate: ""
 
+# Seguimiento de pedidos (#28, ADR 0007). Apagado por defecto: la tienda sale
+# igual que siempre. Con enabled: true se crean orderservice y redis-orders, y
+# frontend y checkoutservice reciben ENABLE_ORDER_TRACKING y ORDER_SERVICE_ADDR.
+# Equivale a kustomize/components/order-tracking.
+orderTracking:
+  enabled: false
+  orderService:
+    name: orderservice
+    resources:
+      requests:
+        cpu: 50m
+        memory: 80Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+  redis:
+    name: redis-orders
+    resources:
+      requests:
+        cpu: 70m
+        memory: 200Mi
+      limits:
+        cpu: 125m
+        memory: 256Mi
+  # Duraciones de demo (docs/modelo-del-pedido.md §5): ciclo de 5 minutos.
+  # Para los defaults del binario (modo revision, casi un dia), pasar
+  # --set orderTracking.durations=null.
+  durations:
+    created: 30s
+    paid: 60s
+    preparing: 90s
+    inTransit: 120s
+
 # @TODO: This service is not currently available in Helm.
 # https://github.com/GoogleCloudPlatform/microservices-demo/tree/main/kustomize/components/shopping-assistant
 shoppingAssistantService:

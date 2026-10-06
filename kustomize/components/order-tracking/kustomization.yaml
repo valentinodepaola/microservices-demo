@@ -18,3 +18,61 @@ kind: Component
 resources:
 - redis-orders.yaml
 - orderservice.yaml
+# Encender el componente (#28). Sin estos parches, frontend y checkoutservice
+# siguen sin saber que orderservice existe: el apagador está, pero no conecta.
+patches:
+# frontend: registra las rutas de seguimiento y muestra los enlaces.
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: frontend
+    spec:
+      template:
+        spec:
+          containers:
+          - name: server
+            env:
+            - name: ENABLE_ORDER_TRACKING
+              value: "true"
+            - name: ORDER_SERVICE_ADDR
+              value: "orderservice:50051"
+# checkoutservice: crea el cliente gRPC y registra cada pedido al cobrar (#12).
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: checkoutservice
+    spec:
+      template:
+        spec:
+          containers:
+          - name: server
+            env:
+            - name: ENABLE_ORDER_TRACKING
+              value: "true"
+            - name: ORDER_SERVICE_ADDR
+              value: "orderservice:50051"
+# Duraciones de demo: el ciclo completo dura 5 minutos en vez de casi un día,
+# para que en la presentación se vea el pedido pasar por todas las etapas.
+# Son los valores de docs/modelo-del-pedido.md §5 (30s + 60s + 90s + 120s).
+# Los defaults del binario siguen siendo los de modo revisión.
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: orderservice
+    spec:
+      template:
+        spec:
+          containers:
+          - name: server
+            env:
+            - name: ORDER_CREATED_DURATION
+              value: "30s"
+            - name: ORDER_PAID_DURATION
+              value: "60s"
+            - name: ORDER_PREPARING_DURATION
+              value: "90s"
+            - name: ORDER_IN_TRANSIT_DURATION
+              value: "120s"
