@@ -32,6 +32,11 @@ resource "aws_instance" "k3s" {
   tags = {
     Name = "${var.project}-k3s"
   }
+
+  # La ami se resuelve sola a la mas reciente y sin esto cada imagen nueva de Canonical recrearia el nodo. 
+  lifecycle {
+    ignore_changes = [ami]
+  }
 }
 
 resource "aws_eip" "k3s" {

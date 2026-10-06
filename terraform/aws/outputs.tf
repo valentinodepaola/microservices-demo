@@ -22,3 +22,23 @@ output "kubeconfig_comando" {
     chmod 600 ~/.kube/boutique-k3s.yaml
   EOT
 }
+
+output "vault_instance_id" {
+  description = "Id de la instancia de Vault. Se usa para apagarla, encenderla, entrar por SSM y como host del inventario de Ansible."
+  value       = aws_instance.vault.id
+}
+
+output "vault_public_ip" {
+  description = "IP elastica de Vault. Es la que va dentro de su certificado."
+  value       = aws_eip.vault.public_ip
+}
+
+output "vault_url" {
+  description = "Direccion del API y la interfaz web de Vault, una vez que Ansible lo instale."
+  value       = "https://${aws_eip.vault.public_ip}:8200"
+}
+
+output "ansible_ssm_bucket" {
+  description = "Bucket por donde el plugin de SSM de Ansible pasa archivos a la maquina de Vault."
+  value       = local.ansible_ssm_bucket
+}

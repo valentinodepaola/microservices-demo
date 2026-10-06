@@ -2,6 +2,8 @@
 
 Módulo de Terraform que crea el clúster de Kubernetes donde se despliega Online Boutique en la fase B del despliegue continuo, según el [ADR 0010](../../docs/adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md).
 
+Desde la Fase 3 crea también **la máquina de Vault**, aparte del clúster, según el [ADR 0011](../../docs/adr/0011-secretos-del-pipeline-en-vault.md). Todo lo de Vault vive en [`vault.tf`](vault.tf). Terraform solo crea la máquina vacía; quien instala Vault adentro es Ansible.
+
 > **Para el día a día —encender, apagar, renovar las llaves— usar [`docs/operar-el-cluster-de-aws.md`](../../docs/operar-el-cluster-de-aws.md).** Esta página explica qué crea el módulo y por qué; aquella dice qué comando correr y cuándo.
 
 **Este módulo crea la infraestructura; no despliega la aplicación.** Terraform levanta el clúster vacío y produce el *kubeconfig*; quien despliega la tienda dentro es [`cd-main.yaml`](../../.github/workflows/cd-main.yaml). Esa separación es deliberada: el módulo heredado de Google, conservado en [`../gcp-heredado/`](../gcp-heredado/), mezclaba las dos cosas en un mismo `apply`, y con ello ni la infraestructura ni el despliegue se distinguían como piezas propias.
@@ -19,7 +21,17 @@ Módulo de Terraform que crea el clúster de Kubernetes donde se despliega Onlin
 | `aws_instance` | El nodo, `m5.large` con Ubuntu 24.04 `x86_64`, que instala k3s al arrancar |
 | `aws_eip` + asociación | Dirección pública fija |
 
-La AMI no está fijada por identificador: se resuelve con un `data source` filtrando por Canonical y por `amd64`, porque el identificador cambia según la región y con cada publicación de imagen.
+Y para Vault, en `vault.tf`:
+
+| Recurso | Para qué |
+|---|---|
+| `aws_instance` | La máquina de Vault, `t3.small` con Ubuntu 24.04 y disco de 10 GB. Arranca limpia, sin `user_data` |
+| `aws_eip` + asociación | Su dirección pública fija. Va dentro del certificado de Vault, así que no puede cambiar |
+| `aws_security_group` | Su propio firewall, separado del del nodo |
+| 2 reglas de firewall | Entrada `8200` (API e interfaz web de Vault); salida sin restricción. Sin 22 y sin 80 |
+| `aws_s3_bucket_public_access_block` y `aws_s3_bucket_lifecycle_configuration` | Bloquean el acceso público al bucket de Ansible y borran lo que quede en él después de un día. El bucket en sí se crea a mano (ver abajo) |
+
+La AMI no está fijada por identificador: se resuelve con un `data source` filtrando por Canonical y por `amd64`, porque el identificador cambia según la región y con cada publicación de imagen. Por eso las dos instancias tienen `ignore_changes = [ami]`: sin eso, cada imagen nueva de Canonical haría que el `plan` quisiera destruirlas y crearlas otra vez.
 
 ## Requisitos
 
@@ -54,6 +66,20 @@ aws s3api put-bucket-versioning --bucket tfstate-boutique-614858348004 --version
 **Por qué es un paso manual y no un recurso más del módulo:** el bloque `backend` se lee durante el `terraform init`, antes de que Terraform pueda crear nada. Un módulo no puede construir el bucket donde guarda su propio estado. Las alternativas —un segundo módulo solo para el bucket, o crearlo con estado local y migrarlo después— mueven el problema en lugar de resolverlo.
 
 El *versioning* no es opcional: conserva cada versión anterior del estado, que es lo que permite recuperarse si un `apply` lo corrompe.
+
+## Preparación, por única vez: el bucket de Ansible
+
+Ansible entra a la máquina de Vault por SSM, y su plugin necesita un bucket para pasarle archivos. Ese bucket **también se crea a mano**, antes del primer `apply`:
+
+```bash
+aws s3api create-bucket --bucket boutique-ansible-ssm-614858348004 --region us-east-1
+```
+
+**Por qué a mano:** el provider de AWS, cada vez que revisa un `aws_s3_bucket`, le pregunta por su configuración de *object lock*, y el lab niega ese permiso (`s3:GetBucketObjectLockConfiguration`) con una política de la organización. Terraform alcanza a crear el bucket, pero falla al leerlo, y en el siguiente `apply` intenta borrarlo y crearlo otra vez. Lo comprobé el 05/10: de las lecturas que hace el provider sobre un bucket, esa es la única bloqueada. Por eso Terraform solo maneja el bloqueo público y la regla de un día, que sí puede leer.
+
+**Este va sin *versioning*, al revés que el del estado.** Los archivos que pasa Ansible pueden llevar secretos en texto plano, y con *versioning* las copias borradas se quedan para siempre. Por lo mismo no se reusa el bucket del estado.
+
+`terraform destroy` tampoco borra este bucket. Con la regla de un día no se queda nada adentro.
 
 ## Levantar la infraestructura
 
@@ -102,7 +128,15 @@ kubectl --kubeconfig ~/.kube/boutique-k3s.yaml get nodes -o wide
 aws ssm start-session --target $(terraform output -raw instance_id)
 ```
 
+A la máquina de Vault se entra igual:
+
+```bash
+aws ssm start-session --target $(terraform output -raw vault_instance_id)
+```
+
 No hay llave privada que custodiar ni puerto expuesto que atacar.
+
+> **`start-session` necesita el Session Manager plugin en la Mac.** Sin él, el CLI responde `SessionManagerPlugin is not found`, aunque la máquina esté bien registrada. Se instala con `brew install --cask session-manager-plugin`. Ansible también lo necesita para entrar a Vault.
 
 ## Operación diaria y presupuesto
 
@@ -113,8 +147,11 @@ El presupuesto del laboratorio es de **50 USD**, y agotarlo **desactiva la cuent
 | Instancia `m5.large` | Solo encendida | ~0.10 USD/hora |
 | Disco de 30 GB | Siempre, aunque esté detenida | ~2.40 USD/mes |
 | IP elástica | Siempre, mientras esté reservada | ~3.60 USD/mes |
+| Instancia `t3.small` de Vault | Solo encendida | ~0.02 USD/hora |
+| Disco de 10 GB de Vault | Siempre, aunque esté detenida | ~0.80 USD/mes |
+| IP elástica de Vault | Siempre, mientras esté reservada | ~3.60 USD/mes |
 
-> **El laboratorio enciende sola la instancia** al iniciar cada sesión, aunque se haya detenido antes. Conviene revisar al abrir:
+> **El laboratorio enciende solas las dos instancias** al iniciar cada sesión, aunque se hayan detenido antes. Conviene revisar al abrir:
 >
 > ```bash
 > aws ec2 describe-instances --filters Name=instance-state-name,Values=running \
@@ -124,7 +161,7 @@ El presupuesto del laboratorio es de **50 USD**, y agotarlo **desactiva la cuent
 Detener al terminar la jornada:
 
 ```bash
-aws ec2 stop-instances --instance-ids $(terraform output -raw instance_id)
+aws ec2 stop-instances --instance-ids $(terraform output -raw instance_id) $(terraform output -raw vault_instance_id)
 ```
 
 Detener conserva el disco, la IP elástica y, por tanto, la validez del *kubeconfig*: k3s vuelve a levantar solo al encender y la dirección no cambia.
@@ -137,7 +174,7 @@ terraform destroy
 
 > **Capturar la evidencia antes.** El clúster respondiendo, los pods corriendo y la tienda accesible solo existen mientras la infraestructura está en pie; reconstruirlos para fotografiarlos cuesta tiempo y presupuesto.
 
-`destroy` **no borra el bucket del estado**, porque no lo creó este módulo. Eso es intencional: el bucket sobrevive a los ciclos de creación y destrucción de la infraestructura.
+`destroy` **no borra el bucket del estado ni el de Ansible**, porque no los creó este módulo. Eso es intencional: los buckets sobreviven a los ciclos de creación y destrucción de la infraestructura.
 
 ## Restricciones del entorno
 
