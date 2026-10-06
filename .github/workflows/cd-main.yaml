@@ -303,6 +303,17 @@ jobs:
             kubectl wait --for=condition=available --timeout=600s deployment/$d
           done
 
+      - name: Contar los pedidos que ya habia en redis-orders
+        # Punto de partida del smoke test de redis-orders. Los pedidos no
+        # expiran y redis-orders no se reinicia entre despliegues (imagen
+        # fija), asi que desde el segundo merge siempre hay pedidos viejos.
+        # El smoke test exige que el numero CREZCA, no solo que sea mayor a 0.
+        run: |
+          set -euo pipefail
+          PEDIDOS_ANTES=$(kubectl exec deploy/redis-orders -- redis-cli DBSIZE | tr -dc "0-9" || true)
+          echo "Pedidos antes del smoke test: ${PEDIDOS_ANTES:-0}"
+          echo "PEDIDOS_ANTES=${PEDIDOS_ANTES:-0}" >> "$GITHUB_ENV"
+
       - name: Obtener la direccion publica de la tienda
         id: tienda
         # La direccion sale del kubeconfig, no del Service.
@@ -347,11 +358,13 @@ jobs:
       - name: Smoke test - los pedidos llegan a redis-orders
         # Comprueba el camino completo checkout -> orderservice -> Redis (#28).
         # El loadgenerator hace unas 0.1 compras por segundo, asi que despues
-        # del smoke test anterior ya deberia haber pedidos; si no, se le dan
-        # hasta 3 minutos mas antes de dar el despliegue por roto.
+        # del smoke test anterior ya deberia haber pedidos NUEVOS, por encima
+        # de PEDIDOS_ANTES; si no, se le dan hasta 3 minutos mas antes de dar
+        # el despliegue por roto.
         #
         # redis-orders corre sin contrasena. Cuando entre #79, redis-cli
-        # necesita -a (o REDISCLI_AUTH) o este paso responde NOAUTH.
+        # necesita -a (o REDISCLI_AUTH) o este paso y el conteo de arriba
+        # responden NOAUTH.
         timeout-minutes: 5
         run: |
           set -euo pipefail
@@ -359,12 +372,12 @@ jobs:
           for i in $(seq 1 36); do
             PEDIDOS=$(kubectl exec deploy/redis-orders -- redis-cli DBSIZE | tr -dc "0-9" || true)
             PEDIDOS=${PEDIDOS:-0}
-            [ "$PEDIDOS" -gt 0 ] && break
+            [ "$PEDIDOS" -gt "$PEDIDOS_ANTES" ] && break
             sleep 5
           done
-          echo "Pedidos en redis-orders: $PEDIDOS"
-          if [ "$PEDIDOS" -eq 0 ]; then
-            echo "::error::redis-orders sigue vacio despues del trafico del loadgenerator. Revisar 'kubectl logs deploy/checkoutservice' y 'kubectl logs deploy/orderservice'."
+          echo "Pedidos en redis-orders: $PEDIDOS_ANTES antes, $PEDIDOS despues"
+          if [ "$PEDIDOS" -le "$PEDIDOS_ANTES" ]; then
+            echo "::error::No llego ningun pedido nuevo a redis-orders con el trafico del loadgenerator. Revisar 'kubectl logs deploy/checkoutservice' y 'kubectl logs deploy/orderservice'."
             exit 1
           fi
 

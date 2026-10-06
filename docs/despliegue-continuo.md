@@ -91,7 +91,7 @@ Con el perfil vienen tres cambios más en el workflow:
 
 - `orderservice` y `redis-orders` están en la lista de *Esperar a que los Deployments esten disponibles*. Si no, el smoke test de abajo podría correr antes de que Redis esté listo y fallar por una carrera.
 - `orderservice` está en la lista del *Rollback automatico*. `redis-orders` no, por la misma razón que `redis-cart`: su imagen es fija.
-- Un segundo smoke test, *los pedidos llegan a redis-orders*, revisa con `redis-cli DBSIZE` que después del tráfico del `loadgenerator` haya al menos un pedido guardado. Eso comprueba el camino checkout → `orderservice` → Redis. Cuando #79 le ponga contraseña a `redis-orders`, este paso tiene que pasarla o responde `NOAUTH`.
+- Un segundo smoke test, *los pedidos llegan a redis-orders*, revisa con `redis-cli DBSIZE` que después del tráfico del `loadgenerator` haya pedidos **nuevos**. Eso comprueba el camino checkout → `orderservice` → Redis. No basta con que haya al menos uno: los pedidos no expiran y `redis-orders` no se reinicia entre despliegues, así que desde el segundo merge siempre quedan pedidos viejos. Por eso el paso *Contar los pedidos que ya habia en redis-orders* guarda el número justo después de la espera, y el smoke test exige que crezca. Cuando #79 le ponga contraseña a `redis-orders`, los dos pasos tienen que pasarla o responden `NOAUTH`.
 
 Para desplegar sin seguimiento basta con quitar `-p order-tracking` del paso *Desplegar* (y el segundo smoke test, que fallaría siempre).
 
