@@ -1,0 +1,15 @@
+# Instala Vault desde el repositorio oficial de HashiCorp, con version fija.
+- name: Agregar el repositorio de HashiCorp
+  ansible.builtin.deb822_repository:
+    name: hashicorp
+    types: deb
+    uris: https://apt.releases.hashicorp.com
+    suites: "{{ ansible_facts['distribution_release'] }}"
+    components: main
+    signed_by: https://apt.releases.hashicorp.com/gpg
+  register: repo_hashicorp
+
+- name: Instalar Vault
+  ansible.builtin.apt:
+    name: "vault={{ vault_version }}-1"
+    update_cache: "{{ repo_hashicorp.changed }}"

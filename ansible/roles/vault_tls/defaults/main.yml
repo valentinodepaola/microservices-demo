@@ -1,0 +1,8 @@
+# Donde quedan la llave y el certificado de Vault, en su maquina.
+vault_tls_dir: /opt/vault/tls
+# Donde vive la autoridad propia: el contenedor monta aqui ~/.vault-boutique
+# de la Mac (ver ansible.sh).
+vault_ca_dir: /root/.vault-boutique
+# El certificado raiz. Es publico y va en el repo: lo usan el llavero de la
+# Mac y el pipeline (#80) para confiar en Vault.
+vault_ca_cert: /ansible/vault-ca.crt

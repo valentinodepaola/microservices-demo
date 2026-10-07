@@ -1,0 +1,104 @@
+# HTTPS de Vault con una autoridad propia (ADR 0011, pieza 5). La llave de la
+# autoridad se queda en la Mac y la de Vault nace en su maquina: entre las
+# dos solo viajan la solicitud y el certificado, que son publicos.
+
+# --- La autoridad, en la Mac (una sola vez) ---
+
+- name: Crear la carpeta de la autoridad
+  ansible.builtin.file:
+    path: "{{ vault_ca_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Crear la llave de la autoridad
+  community.crypto.openssl_privatekey:
+    path: "{{ vault_ca_dir }}/ca.key"
+    mode: "0600"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Preparar la solicitud de la autoridad
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: "{{ vault_ca_dir }}/ca.key"
+    common_name: Boutique Vault CA
+    basic_constraints:
+      - "CA:TRUE"
+    basic_constraints_critical: true
+    key_usage:
+      - keyCertSign
+      - cRLSign
+    key_usage_critical: true
+  register: ca_csr
+  changed_when: false
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: Crear el certificado raiz de la autoridad
+  community.crypto.x509_certificate:
+    path: "{{ vault_ca_cert }}"
+    csr_content: "{{ ca_csr.csr }}"
+    privatekey_path: "{{ vault_ca_dir }}/ca.key"
+    provider: selfsigned
+    selfsigned_not_after: "+3650d"
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+# --- El certificado de Vault ---
+
+- name: Crear la llave de Vault en su maquina
+  community.crypto.openssl_privatekey:
+    path: "{{ vault_tls_dir }}/vault.key"
+    owner: vault
+    group: vault
+    mode: "0600"
+
+- name: Crear la solicitud del certificado de Vault
+  community.crypto.openssl_csr:
+    path: "{{ vault_tls_dir }}/vault.csr"
+    privatekey_path: "{{ vault_tls_dir }}/vault.key"
+    common_name: vault
+    # La IP elastica la da el inventario dinamico. 127.0.0.1 y localhost son
+    # para usar la CLI de Vault desde la propia maquina.
+    subject_alt_name:
+      - "IP:{{ public_ip_address }}"
+      - "IP:127.0.0.1"
+      - "DNS:localhost"
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    extended_key_usage:
+      - serverAuth
+    owner: vault
+    group: vault
+    mode: "0644"
+
+- name: Traer la solicitud a la Mac
+  ansible.builtin.fetch:
+    src: "{{ vault_tls_dir }}/vault.csr"
+    dest: "{{ vault_ca_dir }}/vault.csr"
+    flat: true
+
+- name: Firmar el certificado de Vault con la autoridad
+  community.crypto.x509_certificate:
+    path: "{{ vault_ca_dir }}/vault.crt"
+    csr_path: "{{ vault_ca_dir }}/vault.csr"
+    provider: ownca
+    ownca_path: "{{ vault_ca_cert }}"
+    ownca_privatekey_path: "{{ vault_ca_dir }}/ca.key"
+    ownca_not_after: "+365d"
+  delegate_to: localhost
+  become: false
+
+- name: Copiar el certificado a la maquina de Vault
+  ansible.builtin.copy:
+    src: "{{ vault_ca_dir }}/vault.crt"
+    dest: "{{ vault_tls_dir }}/vault.crt"
+    owner: vault
+    group: vault
+    mode: "0644"

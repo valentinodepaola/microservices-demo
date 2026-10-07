@@ -1,0 +1,8 @@
+# Deja Vault instalado y corriendo en su maquina
+- name: Instalar y configurar Vault
+  hosts: vault
+  become: true
+  roles:
+  - base
+  - vault_install
+  - vault_tls
