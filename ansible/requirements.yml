@@ -1,0 +1,10 @@
+# Colecciones que usa el playbook de vault, con version fija para que
+# todos instalen exactamente lo mismo.
+# Se instalan al construir la imagen (ver Dockerfile).
+collections:
+  # Conexion por SSM (aws_ssm) e inventario dinamico (aws_ec2)
+  - name: amazon.aws
+    version: 11.5.0
+  # Autoridad propia, llave y certificado de Vault
+  - name: community.crypto
+    version: 3.5.0
