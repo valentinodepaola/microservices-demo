@@ -81,6 +81,8 @@ aws s3api create-bucket --bucket boutique-ansible-ssm-614858348004 --region us-e
 
 `terraform destroy` tampoco borra este bucket. Con la regla de un día no se queda nada adentro.
 
+Lo que Ansible instala en la máquina de Vault, y cómo se corre, está en [`ansible/README.md`](../../ansible/README.md).
+
 ## Levantar la infraestructura
 
 ```bash
