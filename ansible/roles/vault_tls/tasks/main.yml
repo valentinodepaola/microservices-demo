@@ -25,6 +25,9 @@
   community.crypto.openssl_csr_pipe:
     privatekey_path: "{{ vault_ca_dir }}/ca.key"
     common_name: Boutique Vault CA
+    # Sin esto, el modulo copia el nombre como "DNS:Boutique Vault CA", que no
+    # es un nombre valido (lleva espacios), y macOS rechaza toda la cadena.
+    use_common_name_for_san: false
     basic_constraints:
       - "CA:TRUE"
     basic_constraints_critical: true
@@ -102,3 +105,4 @@
     owner: vault
     group: vault
     mode: "0644"
+  notify: Reiniciar Vault

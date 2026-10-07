@@ -1,0 +1,16 @@
+# Configura Vault y lo deja encendido. Usa vault_tls_dir del rol vault_tls,
+# que tiene que correr antes.
+- name: Escribir la configuracion de Vault
+  ansible.builtin.template:
+    src: vault.hcl.j2
+    dest: /etc/vault.d/vault.hcl
+    owner: vault
+    group: vault
+    mode: "0640"
+  notify: Reiniciar Vault
+
+- name: Encender Vault y dejarlo habilitado al arrancar la maquina
+  ansible.builtin.systemd_service:
+    name: vault
+    state: started
+    enabled: true

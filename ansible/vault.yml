@@ -6,3 +6,4 @@
   - base
   - vault_install
   - vault_tls
+  - vault_config

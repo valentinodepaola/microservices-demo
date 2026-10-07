@@ -1,0 +1,29 @@
+# Generado por Ansible (roles/vault_config). Si se edita a mano, la siguiente
+# corrida del playbook lo sobrescribe.
+
+# La interfaz web, en https://<IP elastica>:8200/ui (paso 5 del plan).
+ui = true
+
+# Con raft, HashiCorp recomienda apagar mlock: raft guarda en disco con mmap
+# y mlock no se lleva bien con eso.
+disable_mlock = true
+
+# Direccion con la que Vault se anuncia hacia afuera.
+api_addr = "https://{{ public_ip_address }}:8200"
+# Un solo nodo: el puerto de cluster no sale de la maquina.
+cluster_addr = "https://127.0.0.1:8201"
+
+# Almacenamiento integrado (ADR 0011, pieza 6). Permite sacar fotos con
+# `vault operator raft snapshot save`.
+storage "raft" {
+  path    = "/opt/vault/data"
+  node_id = "vault-1"
+}
+
+# El certificado lo deja el rol vault_tls.
+listener "tcp" {
+  address         = "0.0.0.0:8200"
+  cluster_address = "127.0.0.1:8201"
+  tls_cert_file   = "{{ vault_tls_dir }}/vault.crt"
+  tls_key_file    = "{{ vault_tls_dir }}/vault.key"
+}
