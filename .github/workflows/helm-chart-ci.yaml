@@ -40,6 +40,23 @@ jobs:
           cat helm-template.yaml 
           kustomize create --resources helm-template.yaml
           kustomize build .
+      # Seguimiento de pedidos encendido (#13). Ademas de que renderice, revisa
+      # que salgan orderservice, redis-orders y el kill switch en frontend y
+      # checkoutservice; si alguno falta, el paso truena.
+      - name: helm template order tracking
+        run: |
+          cd helm-chart/
+          helm template . \
+            --set orderTracking.enabled=true \
+            -n onlineboutique \
+            > helm-template.yaml
+          cat helm-template.yaml
+          for d in orderservice redis-orders; do
+            grep -q "^  name: $d$" helm-template.yaml || { echo "Falta el Deployment $d"; exit 1; }
+          done
+          test "$(grep -c 'name: ENABLE_ORDER_TRACKING' helm-template.yaml)" -eq 2 \
+            || { echo "ENABLE_ORDER_TRACKING tiene que salir en frontend y checkoutservice"; exit 1; }
+          kustomize build .
       - name: helm template grpc health probes
         run: |
           # Test related to https://medium.com/google-cloud/b5bd26253a4c
