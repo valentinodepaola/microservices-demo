@@ -1,0 +1,16 @@
+# Inventario dinámico: le pregunta a AWS qué máquina es la de Vault, en vez
+# de escribir su id a mano. El id cambia cada vez que Terraform la recrea
+# (-replace), y así no hay que editar nada.
+plugin: amazon.aws.aws_ec2
+regions:
+  - us-east-1
+filters:
+  tag:Name: boutique-vault
+  instance-state-name: running
+# Con SSM el "host" es el id de la instancia, no una IP
+hostnames:
+  - instance-id
+groups:
+  vault: true
+# Sin esto, cada comando avisa que la variable 'tags' va a desaparecer
+use_deprecated_tags: false

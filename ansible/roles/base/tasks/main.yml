@@ -1,0 +1,16 @@
+# Lo que necesitan los demas roles antes de instalar Vault.
+- name: Actualizar la lista de paquetes de apt
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Instalar las dependencias
+  ansible.builtin.apt:
+    name:
+      # Para descargar por HTTPS del repositorio de HashiCorp.
+      - ca-certificates
+      # Lo usa el modulo deb822_repository para agregar ese repositorio.
+      - python3-debian
+      # Lo usa community.crypto para crear la llave y el CSR en la maquina.
+      - python3-cryptography
+    state: present

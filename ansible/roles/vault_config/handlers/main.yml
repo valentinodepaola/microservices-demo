@@ -1,0 +1,6 @@
+# Solo corre si una tarea lo avisa (notify): cuando cambia la configuracion o
+# el certificado. Ojo: despues de #78, reiniciar deja Vault sellado.
+- name: Reiniciar Vault
+  ansible.builtin.systemd_service:
+    name: vault
+    state: restarted

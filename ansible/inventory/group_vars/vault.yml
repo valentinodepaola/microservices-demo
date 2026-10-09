@@ -1,0 +1,6 @@
+# Como entra Ansible a la maquina de Vault: por SSM, sin SSH
+ansible_connection: amazon.aws.aws_ssm
+ansible_aws_ssm_region: us-east-1
+# El bucket por donde el plugin pasa archivos. Sale de una
+# variable de entorno para no escribir el numero de cuenta en el repo.
+ansible_aws_ssm_bucket_name: "{{ lookup('ansible.builtin.env', 'ANSIBLE_SSM_BUCKET') }}"
