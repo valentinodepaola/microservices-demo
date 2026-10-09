@@ -103,14 +103,14 @@ grpcurl -plaintext -d '{"tracking_id":"NO-EXISTE"}' \
 
 | Paso | Esperado | Obtenido |
 |------|----------|----------|
-| 1. Despliegue con `-p order-tracking` | `orderservice` y `redis-orders` disponibles | |
-| 2. Compra | La confirmación muestra el Tracking # | |
-| 3. `EXISTS` en `redis-orders` | `1` | |
-| 4. `GetOrderByTrackingId` | Estado, productos y total de la compra | |
-| 4. Repetir a los ~5 min | `ORDER_STATUS_DELIVERED` | |
-| 5. Número inexistente | `NotFound` | |
+| 1. Despliegue con `-p order-tracking` | `orderservice` y `redis-orders` disponibles | Los cuatro Deployments con `condition met` |
+| 2. Compra | La confirmación muestra el Tracking # | `HC-44147-229877721`, total $118.98 |
+| 3. `EXISTS` en `redis-orders` | `1` | `1` |
+| 4. `GetOrderByTrackingId` | Estado, productos y total de la compra | `ORDER_STATUS_PREPARING`, un producto (`1YMWWN1N4O`) y total $118.98. La `timeline` trae las cinco etapas separadas 30, 60, 90 y 120 s |
+| 4. Repetir a los ~5 min | `ORDER_STATUS_DELIVERED` | `ORDER_STATUS_DELIVERED`, 5 minutos después de la compra |
+| 5. Número inexistente | `NotFound` | `NotFound: no order with tracking id NO-EXISTE` |
 
-Probado el AAAA-MM-DD sobre el commit `<SHA>`.
+Probado el 2026-10-09 sobre el commit `d5574599`, en el clúster de AWS y no en el local. Ahí el CD ya despliega con `-p order-tracking`, así que los pasos 2 a 5 son los mismos; la única diferencia es que la tienda se abre directo en su IP pública, sin `port-forward`.
 
 ## Regenerar los stubs
 
