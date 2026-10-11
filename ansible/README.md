@@ -2,7 +2,7 @@
 
 Este playbook deja HashiCorp Vault instalado, configurado y corriendo en la máquina que crea `terraform/aws/vault.tf` (#76), con su interfaz web por HTTPS. Se puede correr las veces que sea: si la máquina ya está bien, no cambia nada, y si está vacía, la deja completa. Las decisiones de diseño están en el [ADR 0011](../docs/adr/0011-secretos-del-pipeline-en-vault.md).
 
-No inicializa Vault: eso genera los pedazos de la llave y el token raíz, y no deben pasar por Ansible ni por su bucket. Ese paso es de #78.
+No inicializa Vault: eso genera los pedazos de la llave y el token raíz, y no deben pasar por Ansible ni por su bucket. Ese paso, y todo lo que se configura adentro de Vault, está en [`vault/README.md`](../vault/README.md) (#78).
 
 ## Qué hace
 
@@ -11,7 +11,7 @@ No inicializa Vault: eso genera los pedazos de la llave y el token raíz, y no d
 | `base` | La lista de `apt` al día y los paquetes que usan los demás roles |
 | `vault_install` | El repositorio oficial de HashiCorp y Vault en la versión fija de `roles/vault_install/defaults/main.yml` (hoy la `2.1.1`) |
 | `vault_tls` | La llave y el certificado de Vault en `/opt/vault/tls/`, firmados por nuestra autoridad propia |
-| `vault_config` | `/etc/vault.d/vault.hcl` con la UI, `raft` y el listener por HTTPS, y el servicio encendido y habilitado |
+| `vault_config` | `/etc/vault.d/vault.hcl` con la UI, `raft` y el listener por HTTPS, la carpeta `/var/log/vault/` para la bitácora de auditoría, y el servicio encendido y habilitado |
 
 Vault solo se reinicia si cambia su configuración o su certificado.
 

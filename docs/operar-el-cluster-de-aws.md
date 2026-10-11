@@ -166,6 +166,30 @@ skaffold deploy --build-artifacts=/tmp/build.json
 
 Es el mismo comando que corre el workflow.
 
+El kubeconfig también vive en Vault, en `boutique/kubeconfig`, y hay que actualizarlo ahí. Hace falta un token raíz: los pasos están en [`vault/README.md`](../vault/README.md), en *Generar un token raíz nuevo* y *Configurar Vault*. `configurar.sh` ve que el kubeconfig cambió y lo carga.
+
+### 3. Abrir Vault
+
+Desde el #78, Vault guarda los secretos del pipeline, y cada vez que se enciende su máquina despierta **sellado**: está prendido, pero no responde a nadie hasta que alguien lo abre con 2 de los 3 pedazos de la llave. Si se te olvida, el primer merge del día falla en el paso de Vault. No toca el clúster: abres Vault y le das *Re-run failed jobs*.
+
+Desde la raíz del repo:
+
+```bash
+export VAULT_ADDR=https://98.94.123.92:8200
+export VAULT_CACERT=$PWD/ansible/vault-ca.crt
+vault status
+```
+
+Si dice `Sealed true`:
+
+```bash
+vault operator unseal
+```
+
+Lo corres dos veces, con un pedazo distinto cada vez. Lo pide oculto, así que no queda en el historial. Cuando `vault status` diga `Sealed false`, ya está.
+
+También se puede desde el navegador: en `https://98.94.123.92:8200/ui`, con Vault sellado, la página pide los pedazos. Desde la red de la escuela el 8200 no pasa; ahí se entra por el túnel de SSM de [`ansible/README.md`](../ansible/README.md).
+
 ---
 
 ## Terminar el día
@@ -304,6 +328,12 @@ aws ssm start-session --target $(terraform output -raw instance_id)
 # Actualizar el secreto (solo si creaste la instancia de nuevo)
 base64 -i ~/.kube/boutique-k3s.yaml | gh secret set KUBECONFIG_K3S \
   -R valentinodepaola/microservices-demo --env aws-k3s
+
+# ¿Vault está abierto? (con VAULT_ADDR y VAULT_CACERT exportados)
+vault status
+
+# Abrirlo (dos veces, un pedazo distinto cada vez)
+vault operator unseal
 ```
 
 ## Otras páginas
@@ -311,3 +341,4 @@ base64 -i ~/.kube/boutique-k3s.yaml | gh secret set KUBECONFIG_K3S \
 - [despliegue-continuo.md](despliegue-continuo.md): cómo funciona `cd-main.yaml` y qué revisar cuando falla
 - [`terraform/aws/README.md`](../terraform/aws/README.md): qué crea el módulo y por qué
 - [ADR 0010](adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md): por qué AWS, por qué k3s y no EKS, y lo que cuesta esa decisión
+- [`vault/README.md`](../vault/README.md): abrir Vault, renovar el token del pipeline y generar un token raíz nuevo
