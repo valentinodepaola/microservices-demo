@@ -309,9 +309,14 @@ jobs:
         # expiran y redis-orders no se reinicia entre despliegues (imagen
         # fija), asi que desde el segundo merge siempre hay pedidos viejos.
         # El smoke test exige que el numero CREZCA, no solo que sea mayor a 0.
+        #
+        # redis-orders pide contrasena (#79). redis-cli se autentica DENTRO
+        # del pod con la variable que ya tiene el contenedor: las comillas
+        # simples hacen que $REDIS_PASSWORD la expanda el sh del pod, no el
+        # runner, asi que la contrasena nunca llega a este job ni a su log.
         run: |
           set -euo pipefail
-          PEDIDOS_ANTES=$(kubectl exec deploy/redis-orders -- redis-cli DBSIZE | tr -dc "0-9" || true)
+          PEDIDOS_ANTES=$(kubectl exec deploy/redis-orders -- sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli DBSIZE' | tr -dc "0-9" || true)
           echo "Pedidos antes del smoke test: ${PEDIDOS_ANTES:-0}"
           echo "PEDIDOS_ANTES=${PEDIDOS_ANTES:-0}" >> "$GITHUB_ENV"
 
@@ -363,15 +368,16 @@ jobs:
         # de PEDIDOS_ANTES; si no, se le dan hasta 3 minutos mas antes de dar
         # el despliegue por roto.
         #
-        # redis-orders corre sin contrasena. Cuando entre #79, redis-cli
-        # necesita -a (o REDISCLI_AUTH) o este paso y el conteo de arriba
-        # responden NOAUTH.
+        # redis-cli se autentica dentro del pod, igual que en el conteo de
+        # arriba (#79). Si la autenticacion falla, NOAUTH no trae digitos y el
+        # conteo da 0: este paso fallaria diciendo que no llegaron pedidos.
+        # Si pasa eso, revisar primero el Secret redis-orders.
         timeout-minutes: 5
         run: |
           set -euo pipefail
           PEDIDOS=0
           for i in $(seq 1 36); do
-            PEDIDOS=$(kubectl exec deploy/redis-orders -- redis-cli DBSIZE | tr -dc "0-9" || true)
+            PEDIDOS=$(kubectl exec deploy/redis-orders -- sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli DBSIZE' | tr -dc "0-9" || true)
             PEDIDOS=${PEDIDOS:-0}
             [ "$PEDIDOS" -gt "$PEDIDOS_ANTES" ] && break
             sleep 5
