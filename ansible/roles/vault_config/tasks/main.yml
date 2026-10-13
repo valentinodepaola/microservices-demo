@@ -9,6 +9,14 @@
     mode: "0640"
   notify: Reiniciar Vault
 
+- name: Crear la carpeta de la bitacora de auditoria
+  ansible.builtin.file:
+    path: /var/log/vault
+    state: directory
+    owner: vault
+    group: vault
+    mode: "0750"
+
 - name: Encender Vault y dejarlo habilitado al arrancar la maquina
   ansible.builtin.systemd_service:
     name: vault
