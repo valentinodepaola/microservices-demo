@@ -233,6 +233,10 @@ orderTracking:
         memory: 128Mi
   redis:
     name: redis-orders
+    # Secret con la contraseña de redis-orders, en la llave `password` (#79).
+    # El chart no lo crea: tiene que existir antes de instalar, o los pods de
+    # redis-orders y orderservice se quedan en CreateContainerConfigError.
+    passwordSecret: redis-orders
     resources:
       requests:
         cpu: 70m

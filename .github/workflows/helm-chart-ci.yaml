@@ -54,6 +54,12 @@ jobs:
           for d in orderservice redis-orders; do
             grep -q "^  name: $d$" helm-template.yaml || { echo "Falta el Deployment $d"; exit 1; }
           done
+          # La contraseña de redis-orders (#79): Redis la exige y los dos
+          # contenedores la leen del Secret.
+          grep -q -- "--requirepass" helm-template.yaml \
+            || { echo "redis-orders tiene que arrancar con --requirepass"; exit 1; }
+          test "$(grep -c 'name: REDIS_PASSWORD' helm-template.yaml)" -eq 2 \
+            || { echo "REDIS_PASSWORD tiene que salir en redis-orders y orderservice"; exit 1; }
           test "$(grep -c 'name: ENABLE_ORDER_TRACKING' helm-template.yaml)" -eq 2 \
             || { echo "ENABLE_ORDER_TRACKING tiene que salir en frontend y checkoutservice"; exit 1; }
           kustomize build .
