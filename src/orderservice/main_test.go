@@ -38,6 +38,33 @@ func TestRequiredEnv(t *testing.T) {
 	}
 }
 
+// REDIS_ADDR es obligatoria; REDIS_PASSWORD no, y vacía quiere decir sin contraseña.
+func TestRedisOptionsFromEnv(t *testing.T) {
+	t.Setenv("REDIS_ADDR", "")
+	t.Setenv("REDIS_PASSWORD", "")
+	if _, err := redisOptionsFromEnv(); err == nil {
+		t.Fatal("expected an error without REDIS_ADDR, got nil")
+	}
+
+	t.Setenv("REDIS_ADDR", "redis-orders:6379")
+	opts, err := redisOptionsFromEnv()
+	if err != nil {
+		t.Fatalf("redisOptionsFromEnv() without password: %v", err)
+	}
+	if opts.Addr != "redis-orders:6379" || opts.Password != "" {
+		t.Fatalf("got Addr=%q Password=%q; want %q and no password", opts.Addr, opts.Password, "redis-orders:6379")
+	}
+
+	t.Setenv("REDIS_PASSWORD", "s3cr3t")
+	opts, err = redisOptionsFromEnv()
+	if err != nil {
+		t.Fatalf("redisOptionsFromEnv() with password: %v", err)
+	}
+	if opts.Password != "s3cr3t" {
+		t.Fatalf("Password = %q; want %q", opts.Password, "s3cr3t")
+	}
+}
+
 // El readiness sigue a Redis: NOT_SERVING si no responde, SERVING cuando vuelve.
 func TestWatchRedisFollowsRedis(t *testing.T) {
 	var redisDown atomic.Bool

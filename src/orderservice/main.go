@@ -72,7 +72,7 @@ func (redisLogger) Printf(_ context.Context, format string, v ...interface{}) {
 }
 
 func main() {
-	redisAddr, err := requiredEnv("REDIS_ADDR")
+	redisOpts, err := redisOptionsFromEnv()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
-	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	rdb := redis.NewClient(redisOpts)
 	defer rdb.Close()
 
 	srv := grpc.NewServer()
@@ -143,6 +143,21 @@ type server struct {
 	durations Durations
 	// now se inyecta para que las pruebas fijen el instante de la consulta.
 	now func() time.Time
+}
+
+// redisOptionsFromEnv arma la conexión a redis-orders desde el entorno.
+// REDIS_PASSWORD es opcional: vacía quiere decir sin contraseña, que es como
+// se comporta go-redis, y así `go run` contra un Redis local sigue funcionando.
+// En el clúster siempre llega, desde el Secret redis-orders (#79).
+func redisOptionsFromEnv() (*redis.Options, error) {
+	addr, err := requiredEnv("REDIS_ADDR")
+	if err != nil {
+		return nil, err
+	}
+	return &redis.Options{
+		Addr:     addr,
+		Password: os.Getenv("REDIS_PASSWORD"),
+	}, nil
 }
 
 // requiredEnv regresa el valor de una variable de entorno obligatoria,
