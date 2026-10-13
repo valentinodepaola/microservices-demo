@@ -33,7 +33,7 @@ Ahora todo vive en `cd-main.yaml`, como tres jobs encadenados con `needs:`:
 
 | Job | Dónde corre | Qué hace |
 |---|---|---|
-| `pruebas` | `ubuntu-24.04`, en la nube | Pruebas de Go (`shippingservice`, `productcatalogservice`, `frontend/validator`) y `dotnet test src/cartservice/` |
+| `pruebas` | `ubuntu-24.04`, en la nube | Pruebas de Go (`shippingservice`, `productcatalogservice`, `checkoutservice`, `orderservice`, `frontend/validator`) y `dotnet test src/cartservice/` |
 | `imagenes` | `ubuntu-24.04`, en la nube | Construye los trece artefactos de Skaffold (doce de la tienda y `orderservice`) para `linux/amd64` y los publica en `ghcr.io`, etiquetados con el SHA |
 | `deploy` | `ubuntu-24.04`, en la nube | Todo lo demás: kubeconfig, despliegue, espera, smoke test y rollback |
 
