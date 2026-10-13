@@ -8,6 +8,14 @@ ui = true
 # y mlock no se lleva bien con eso.
 disable_mlock = true
 
+# Desde Vault 2.0, generar un token raiz pide un token valido ademas de los
+# pedazos de la llave (CVE-2026-5807). Como revocamos el raiz y los tokens que
+# quedan no tienen permiso para eso, sin esta linea no habria forma de
+# generar otro (#95). Lo que se cede: alguien podria estorbar los intentos.
+# Lo que no: sin 2 de los 3 pedazos nadie genera nada. Solo generate-root;
+# rekey y generate-operation-token siguen pidiendo token.
+enable_unauthenticated_access = ["generate-root"]
+
 # Direccion con la que Vault se anuncia hacia afuera.
 api_addr = "https://{{ public_ip_address }}:8200"
 # Un solo nodo: el puerto de cluster no sale de la maquina.
