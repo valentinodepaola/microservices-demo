@@ -17,16 +17,10 @@ on:
   pull_request:
     branches:
       - main
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - 'kustomize/**'
-      - '.github/workflows/kustomize-build-ci.yaml'
-      - 'terraform/**'
-      - '.github/workflows/terraform-validate-ci.yaml'
-      - 'helm-chart/**'
-      - '.github/workflows/helm-chart-ci.yaml'
+    # Sin paths-ignore a proposito (#27): code-tests es un check obligatorio
+    # en la regla de main, y un check obligatorio que no corre deja el PR
+    # esperando para siempre. El job corre siempre y el paso "Revisar si hay
+    # codigo que probar" decide si hace falta correr las pruebas.
 
 # Ensure this workflow only runs for the most recent commit of a pull-request
 concurrency:
@@ -40,24 +34,49 @@ jobs:
       contents: read
     steps:
     - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+    # Lo que antes ignoraba paths-ignore. Si el PR solo toca esto, las
+    # pruebas se saltan y el check sale en verde, para que un PR de docs
+    # no se quede esperando.
+    - name: Revisar si hay codigo que probar
+      id: cambios
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        IGNORAR='(\.md$|^docs/|^LICENSE$|^kustomize/|^terraform/|^helm-chart/|^\.github/workflows/(kustomize-build-ci|terraform-validate-ci|helm-chart-ci)\.yaml$)'
+        CAMBIOS=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+        echo "Archivos cambiados:"
+        echo "$CAMBIOS"
+        if echo "$CAMBIOS" | grep -qvE "$IGNORAR"; then
+          echo "probar=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "Solo cambian docs o configuracion: no hay pruebas que correr."
+          echo "probar=false" >> "$GITHUB_OUTPUT"
+        fi
     - uses: actions/setup-dotnet@v6
+      if: steps.cambios.outputs.probar == 'true'
       env:
         DOTNET_INSTALL_DIR: "./.dotnet"
       with:
         dotnet-version: '10.0'
     - uses: actions/setup-go@v6
+      if: steps.cambios.outputs.probar == 'true'
       with:
         go-version: '1.26'
     - name: Go Unit Tests
+      if: steps.cambios.outputs.probar == 'true'
       timeout-minutes: 10
       run: |
-        for GO_PACKAGE in "shippingservice" "productcatalogservice" "checkoutservice" "frontend/validator"; do
+        for GO_PACKAGE in "shippingservice" "productcatalogservice" "checkoutservice" "orderservice" "frontend/validator"; do
           echo "Testing $GO_PACKAGE..."
           pushd src/$GO_PACKAGE
           go test
           popd
         done
     - name: C# Unit Tests
+      if: steps.cambios.outputs.probar == 'true'
       timeout-minutes: 10
       run: |
         dotnet test src/cartservice/
