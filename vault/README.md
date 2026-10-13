@@ -107,6 +107,8 @@ La foto sale cifrada con la llave de Vault: sin 2 pedazos no se puede leer nada 
 
 Hace falta para correr `configurar.sh`, crear tokens o cambiar un secreto. Se necesitan 2 pedazos de la llave.
 
+Desde Vault 2.0 esto también pide un token válido (CVE-2026-5807), y como el raíz está revocado no tendríamos ninguno que sirva. Por eso `vault.hcl` trae `enable_unauthenticated_access = ["generate-root"]`, que lo deja funcionar solo con los pedazos (#95). Lo que se cede es que alguien en internet podría empezar intentos falsos y estorbar el nuestro; si pasa, se cancela y se vuelve a empezar. Lo que no se cede es lo importante: sin 2 pedazos nadie genera nada.
+
 ```bash
 vault operator generate-root -init
 ```
@@ -130,7 +132,9 @@ vault token revoke -self
 rm ~/.vault-token
 ```
 
-Si alguien empezó un `generate-root` y no lo terminó, se cancela con `vault operator generate-root -cancel`.
+Si alguien empezó un `generate-root` y no lo terminó, se cancela con `vault operator generate-root -cancel`. También funciona sin token.
+
+Si `generate-root -init` contesta `permission denied`, Vault no tiene la opción encendida: corre el playbook de Ansible (`./ansible/ansible.sh ansible-playbook vault.yml`) y vuelve a abrir Vault, porque el playbook lo reinicia.
 
 ## Configurar Vault: `configurar.sh`
 
