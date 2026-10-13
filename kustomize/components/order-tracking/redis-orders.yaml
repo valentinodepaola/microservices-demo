@@ -42,6 +42,16 @@ spec:
           privileged: false
           readOnlyRootFilesystem: true
         image: redis:alpine
+        # La contraseña sale del Secret redis-orders (#79), que no está en el
+        # repo: lo crea el pipeline con lo que saca de Vault. Kubernetes
+        # reemplaza $(REDIS_PASSWORD) con el valor de la variable, sin shell.
+        args: ["--requirepass", "$(REDIS_PASSWORD)"]
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-orders
+              key: password
         ports:
         - containerPort: 6379
         readinessProbe:

@@ -4,7 +4,7 @@ Despliega la funcionalidad de seguimiento de pedidos, que es opcional ([ADR 0007
 
 Contiene dos piezas:
 
-- **`redis-orders`**: la instancia de Redis dedicada a los pedidos (#24).
+- **`redis-orders`**: la instancia de Redis dedicada a los pedidos (#24). Pide contraseña (#79).
 - **`orderservice`**: el servicio de pedidos, con su Deployment, su Service `ClusterIP` en el 50051 y su ServiceAccount (#26). Solo lo llaman `checkoutservice` y `frontend` desde dentro del clúster, así que no se expone hacia afuera.
 
 Además, el componente **parcha** dos Deployments y ajusta un tercero (#28):
@@ -22,6 +22,36 @@ Además, el componente **parcha** dos Deployments y ajusta un tercero (#28):
 | CD (`cd-main.yaml`) | — | siempre encendido: despliega con `-p order-tracking` |
 
 El perfil de Skaffold no apunta a este componente directo: renderiza `kustomize/overlays/order-tracking/`, que es `kubernetes-manifests/` con el componente encima. Los parches necesitan a `frontend` y `checkoutservice` en la misma pasada de kustomize, y `skaffold.yaml` construye `kubernetes-manifests/`, no `kustomize/`.
+
+## La contraseña de `redis-orders`
+
+`redis-orders` pide contraseña y `orderservice` la manda al conectarse (#79). Los dos la leen del Secret `redis-orders`, de la llave `password`. El valor no está en el repo: vive en Vault, en `boutique/redis-orders` ([`vault/README.md`](../../../vault/README.md)).
+
+El Secret tiene que existir antes de encender el componente, sea con Kustomize, Skaffold o Helm. Si no está, los pods de `redis-orders` y `orderservice` se quedan en `CreateContainerConfigError`. Es a propósito: prefiero que no arranque a tener la base de pedidos abierta sin darme cuenta.
+
+Para crearlo o actualizarlo con lo que hay en Vault (con el lab levantado y Vault abierto):
+
+```bash
+vault kv get -field=password boutique/redis-orders | tr -d '\n' \
+  | kubectl create secret generic redis-orders --from-file=password=/dev/stdin --dry-run=client -o yaml \
+  | kubectl apply -f -
+```
+
+La contraseña pasa por la tubería y nunca sale en la terminal. Sirve igual si el Secret ya existe. Para revisar que quedó completa sin imprimirla:
+
+```bash
+kubectl get secret redis-orders -o jsonpath='{.data.password}' | base64 -d | wc -c
+```
+
+Tiene que dar `48`. Si da `49`, se coló un salto de línea y Redis no va a arrancar bien.
+
+Redis y `orderservice` leen la contraseña al arrancar, así que si la cambias no se enteran solos. Hay que reiniciarlos:
+
+```bash
+kubectl rollout restart deploy/redis-orders deploy/orderservice
+```
+
+Mientras no entre #80, el Secret del clúster de AWS lo creo yo a mano con el comando de arriba. Con #80 lo crea el pipeline en cada despliegue.
 
 ## Cómo sabe Kubernetes si `orderservice` está sano
 
@@ -65,9 +95,12 @@ Las llaves tampoco tienen tiempo de expiración: un pedido registrado se puede c
 
 ```
 kubectl get pods                                      # redis-orders y orderservice en Running y 1/1
-kubectl exec deploy/redis-orders -- redis-cli PING    # PONG
-kubectl exec deploy/redis-orders -- redis-cli DBSIZE  # cuántos pedidos hay
+kubectl exec deploy/redis-orders -- sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli PING'    # PONG
+kubectl exec deploy/redis-orders -- sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli DBSIZE'  # cuántos pedidos hay
+kubectl exec deploy/redis-orders -- redis-cli DBSIZE  # sin contraseña: NOAUTH
 ```
+
+`redis-cli` se autentica dentro del pod con la variable que ya tiene el contenedor. Las comillas simples hacen que `$REDIS_PASSWORD` la lea el pod y no tu terminal, así que la contraseña no sale de ahí.
 
 El `1/1` de `orderservice` ya quiere decir que su readiness respondió `SERVING`, o sea que llega a Redis. Para preguntarle directo (la imagen es distroless y no trae shell, así que se hace desde afuera):
 

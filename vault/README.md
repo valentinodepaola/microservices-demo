@@ -166,6 +166,6 @@ Solo si se recrea la máquina de Vault y no hay foto que restaurar (ADR 0011, pi
 
 1. `vault operator init -key-shares=3 -key-threshold=2`. Imprime los 3 pedazos y el token raíz **una sola vez**: guárdalos en ese momento en el gestor de contraseñas, y limpia la terminal con Cmd+K.
 2. `vault operator unseal` dos veces.
-3. `vault login` con el token raíz y `./vault/configurar.sh`. La contraseña de `redis-orders` va a ser nueva, así que hay que reiniciar Redis con ella (#79).
+3. `vault login` con el token raíz y `./vault/configurar.sh`. La contraseña de `redis-orders` va a ser nueva: actualiza el Secret del clúster y reinicia Redis y `orderservice`, como explica el [README del componente](../kustomize/components/order-tracking/README.md#la-contraseña-de-redis-orders) (#79).
 4. Crear los dos tokens (arriba) y mandar el del pipeline a GitHub.
 5. Revocar el token raíz.

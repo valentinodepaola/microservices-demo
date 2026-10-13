@@ -51,6 +51,12 @@ spec:
         # Obligatoria: sin ella el servicio no arranca.
         - name: REDIS_ADDR
           value: "redis-orders:6379"
+        # La misma contraseña que pide redis-orders, del mismo Secret (#79).
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-orders
+              key: password
         # Readiness pregunta por el servicio: si Redis se cae responde
         # NOT_SERVING y el pod deja de recibir tráfico.
         readinessProbe:

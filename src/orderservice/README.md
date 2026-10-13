@@ -9,6 +9,7 @@ Es un componente opcional ([ADR 0007](../../docs/adr/0007-componente-opcional-co
 | Variable | Obligatoria | Default | Para qué |
 |----------|-------------|---------|----------|
 | `REDIS_ADDR` | Sí | — | Dirección de `redis-orders`, p. ej. `redis-orders:6379`. Sin ella el servicio no arranca. |
+| `REDIS_PASSWORD` | No | vacía | Contraseña de `redis-orders`. Vacía quiere decir sin contraseña. En el clúster siempre llega, del Secret `redis-orders` (#79). |
 | `PORT` | No | `50051` | Puerto del servidor gRPC. |
 | `ORDER_CREATED_DURATION` | No | `5m` | Cuánto dura la etapa Creado. |
 | `ORDER_PAID_DURATION` | No | `30m` | Cuánto dura la etapa Pagado. |
@@ -46,6 +47,8 @@ Con un Redis corriendo en `localhost:6379`:
 REDIS_ADDR=localhost:6379 go run .
 ```
 
+Si tu Redis local pide contraseña, agrega `REDIS_PASSWORD=...` antes del `go run`.
+
 Para probarlo:
 
 ```
@@ -70,7 +73,7 @@ kubectl wait --for=condition=available --timeout=300s deploy/orderservice deploy
 **3. Confirmar que el pedido llegó a Redis.** La llave es el número de rastreo:
 
 ```
-kubectl exec deploy/redis-orders -- redis-cli EXISTS <TRACKING_ID>
+kubectl exec deploy/redis-orders -- sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli EXISTS <TRACKING_ID>'
 ```
 
 Responde `1` si el pedido está guardado.

@@ -87,6 +87,11 @@ spec:
           value: "50051"
         - name: REDIS_ADDR
           value: "{{ .Values.orderTracking.redis.name }}:6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.orderTracking.redis.passwordSecret }}
+              key: password
         {{- with .Values.orderTracking.durations }}
         - name: ORDER_CREATED_DURATION
           value: {{ .created | quote }}
@@ -153,6 +158,14 @@ spec:
           privileged: false
           readOnlyRootFilesystem: true
         image: redis:alpine
+        # Kubernetes reemplaza $(REDIS_PASSWORD) con la variable de abajo.
+        args: ["--requirepass", "$(REDIS_PASSWORD)"]
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.orderTracking.redis.passwordSecret }}
+              key: password
         ports:
         - containerPort: 6379
         readinessProbe:
