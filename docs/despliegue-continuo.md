@@ -16,12 +16,13 @@ merge a main → GitHub Actions → pruebas unitarias (ubuntu-24.04)
                                   ✅ → construir y publicar en ghcr.io (ubuntu-24.04)
                                        ❌ → despliegue omitido
                                        ✅ → deploy (ubuntu-24.04)
-                                          → kubeconfig del secreto → ¿el clúster responde?
+                                          → ¿Vault está abierto? → kubeconfig y contraseña de Vault
+                                          → ¿el clúster responde? → Secret de redis-orders
                                           → skaffold deploy (sin construir) → k3s sobre EC2
                                           → kubectl wait → smoke test → ✅  |  ❌ rollback automático
 ```
 
-**Nadie aprueba nada y nadie enciende nada.** Los tres jobs corren en máquinas de GitHub, así que un merge despliega solo. Lo único que tiene que estar encendido es la instancia de EC2 — y ahí está el costo que reemplazó al de la fase A.
+**Nadie aprueba nada y nadie enciende nada.** Los tres jobs corren en máquinas de GitHub, así que un merge despliega solo. Lo único que tiene que estar encendido son las dos instancias de EC2, la del clúster y la de Vault, con Vault abierto — y ahí está el costo que reemplazó al de la fase A.
 
 **Con el laboratorio de AWS cerrado, el despliegue falla.** No espera en cola como pasaba con la Mac apagada: el clúster no existe mientras la instancia está detenida. Por eso el job comprueba que responda **antes** de intentar nada, y falla en veinte segundos con un mensaje que dice qué hacer, en vez de morir diez minutos después dentro del `kubectl wait`. Ver [qué revisar primero](#qué-revisar-primero-cuando-falla).
 
@@ -44,7 +45,7 @@ Ahora todo vive en `cd-main.yaml`, como tres jobs encadenados con `needs:`:
 - **`ci-main.yaml` ya no se dispara con `main`**, solo con `release/*` y a mano. Así hay un solo lugar donde las pruebas deciden si se despliega. No se pierde cobertura: su `paths-ignore` es más amplio que el de `cd-main.yaml`, así que todo merge que lo disparaba también dispara este workflow.
 - **`concurrency: cd-main` cubre también las pruebas.** Si un despliegue anterior sigue corriendo, las pruebas del merge siguiente esperan con él. GitHub deja una sola ejecución en espera por grupo: si llega una tercera, la que esperaba se cancela, y el merge más reciente prueba y despliega todo junto. `cancel-in-progress: false` a propósito — dejar el clúster a medio aplicar es peor que esperar.
 
-**Por qué `needs:` y no encadenar dos workflows con `workflow_run`.** `workflow_run` arranca cuando el otro workflow termina, no cuando sale bien: la condición de éxito hay que agregarla a mano, y si falta, el problema sigue igual pero escondido. Además cambia el disparo de un workflow que despliega, y la [regla 1 del ADR 0008](runner-self-hosted.md#reglas-de-seguridad) solo admite `push` a `main` o `workflow_dispatch` — una regla que nació por el runner self-hosted y que se conserva porque ahora protege algo distinto: el secreto del *kubeconfig*. Y como `ci-main.yaml` ignora los cambios de `kustomize/`, `terraform/` y `helm-chart/`, esos merges se quedarían sin desplegar.
+**Por qué `needs:` y no encadenar dos workflows con `workflow_run`.** `workflow_run` arranca cuando el otro workflow termina, no cuando sale bien: la condición de éxito hay que agregarla a mano, y si falta, el problema sigue igual pero escondido. Además cambia el disparo de un workflow que despliega, y la [regla 1 del ADR 0008](runner-self-hosted.md#reglas-de-seguridad) solo admite `push` a `main` o `workflow_dispatch` — una regla que nació por el runner self-hosted y que se conserva porque ahora protege algo distinto: el token con el que el job le pide los secretos a Vault. Y como `ci-main.yaml` ignora los cambios de `kustomize/`, `terraform/` y `helm-chart/`, esos merges se quedarían sin desplegar.
 
 ## El registro de imágenes: se construye una vez y se despliega eso mismo
 
@@ -115,8 +116,8 @@ El resumen del job (`$GITHUB_STEP_SUMMARY`) registra la duración de cada ejecuc
 
 El despliegue corre dentro del Environment **`aws-k3s`**, que cumple tres funciones:
 
-- **Guarda el secreto `KUBECONFIG_K3S`**, el *kubeconfig* del clúster en base64. Un secreto de Environment solo lo alcanza el job que declara ese Environment, a diferencia de uno de repositorio, que cualquier job de cualquier workflow puede pedir. El *kubeconfig* es acceso de administrador al clúster: que lo vea un solo job es la diferencia entre una llave en un cajón y una llave puesta en la puerta.
-- **Restringe las ramas** con `protected_branches: true`. Solo desde una rama protegida —hoy `main` y solo `main`— se puede desplegar y, por lo tanto, alcanzar ese secreto.
+- **Guarda el secreto `VAULT_TOKEN`**, el token con el que el job le pide a Vault el *kubeconfig* y la contraseña de `redis-orders` ([ADR 0011](adr/0011-secretos-del-pipeline-en-vault.md), #80). Un secreto de Environment solo lo alcanza el job que declara ese Environment, a diferencia de uno de repositorio, que cualquier job de cualquier workflow puede pedir. El token solo sirve para leer esos dos secretos, vence a los 7 días y cada uso queda en la bitácora de Vault. Hasta #80 aquí vivía el *kubeconfig* mismo (`KUBECONFIG_K3S`): quien lo sacara era administrador del clúster para siempre.
+- **Restringe las ramas** con `protected_branches: true`. Solo desde una rama protegida —hoy `main` y solo `main`— se puede desplegar y, por lo tanto, alcanzar ese token.
 - **Publica la URL de la tienda** en la pestaña Actions y en la vista de Deployments, sin tener que abrir los logs.
 
 **Lo que ya no tiene es revisor requerido**, y conviene dejar claro por qué, porque es un control que se quitó a propósito.
@@ -145,20 +146,23 @@ Esto es el nivel 2 de rollback, automático. Para los otros dos niveles (apagar 
 
 ## Qué revisar primero cuando falla
 
-**Si el job muere en `Comprobar que el cluster responde`, el laboratorio está cerrado.** Es el caso más frecuente y el más barato de arreglar. La instancia de EC2 se detiene al cerrar la sesión de AWS Academy, y sin instancia no hay clúster. El paso falla en veinte segundos con una anotación que lo dice. Para volver:
+**Si el job muere en `Comprobar que Vault responde`, Vault está sellado o apagado.** Es el caso más frecuente: Vault despierta sellado cada vez que se enciende su máquina, o sea, cada vez que se abre el lab. La anotación dice cuál de los dos es. Si está sellado, se abre con 2 pedazos de la llave ([`vault/README.md`](../vault/README.md#abrir-vault)); si no responde, la máquina está detenida. En los dos casos no se tocó el clúster, y basta con *Re-run failed jobs*.
+
+**Si muere en `Leer los secretos de Vault`, Vault está abierto pero no entregó los secretos.** Casi siempre es que `VAULT_TOKEN` venció, porque dura 7 días. Se renueva como explica [`vault/README.md`](../vault/README.md#renovar-el-token-del-pipeline). La otra causa es que alguien cambió la política `pipeline`.
+
+**Si muere en `Comprobar que el cluster responde`, el laboratorio está cerrado.** La instancia de EC2 se detiene al cerrar la sesión de AWS Academy, y sin instancia no hay clúster. El paso falla en veinte segundos con una anotación que lo dice. Para volver:
 
 ```bash
 # 1. Start Lab, y pegar las credenciales nuevas (ver terraform/aws/README.md)
 aws sts get-caller-identity
 # 2. Si la instancia no existe, recrearla
 cd terraform/aws && terraform plan -out=tfplan && terraform apply tfplan
-# 3. Volver a extraer el kubeconfig y regenerar el secreto
+# 3. Volver a extraer el kubeconfig y recargarlo en Vault (con un token raíz)
 terraform output -raw kubeconfig_comando | bash
-base64 -i ~/.kube/boutique-k3s.yaml | gh secret set KUBECONFIG_K3S \
-  -R valentinodepaola/microservices-demo --env aws-k3s
+cd ../.. && vault login && ./vault/configurar.sh
 ```
 
-El paso 3 no es opcional aunque la IP no haya cambiado: al recrear la instancia, k3s genera **certificados nuevos**, y el *kubeconfig* guardado en el secreto queda apuntando a una cerradura que ya no existe. El síntoma sería un error de TLS, no de conexión.
+El paso 3 no es opcional aunque la IP no haya cambiado: al recrear la instancia, k3s genera **certificados nuevos**, y el *kubeconfig* guardado en Vault queda apuntando a una cerradura que ya no existe. El síntoma sería un error de TLS, no de conexión. `configurar.sh` necesita un token raíz, y como el raíz está revocado hay que generar uno nuevo con los pedazos de la llave ([`vault/README.md`](../vault/README.md#generar-un-token-raíz-nuevo)).
 
 **Si `deploy` aparece omitido, falló algo antes.** El error está en `pruebas` o en `imagenes`, y el clúster sigue con la versión anterior. No hay nada que revertir.
 
@@ -212,7 +216,7 @@ Dentro de AWS el clúster **no es EKS**: es **k3s sobre una instancia EC2 `x86_6
 |---|---|---|
 | `runs-on` de `deploy` | `[self-hosted, order-tracking]` | `ubuntu-24.04` |
 | Clúster | `docker-desktop`, en una Mac | k3s sobre EC2 `x86_64` |
-| Cómo lo alcanza | `kubectl config use-context docker-desktop` | *Kubeconfig* en un secreto del Environment `aws-k3s` |
+| Cómo lo alcanza | `kubectl config use-context docker-desktop` | *Kubeconfig* en Vault, que el job pide con un token del Environment `aws-k3s` (desde #80) |
 | Compuerta | Revisor requerido en el Environment | Ninguna — la razón que la justificaba desapareció |
 | Imágenes | `ghcr.io` publica, pero el despliegue reconstruye en local | `ghcr.io`, y el despliegue aplica eso mismo sin construir |
 | Infraestructura | Ninguna | Terraform, con estado remoto en S3 |
@@ -259,7 +263,7 @@ Descrita en [`terraform/aws/`](../terraform/aws/README.md): VPC, subred pública
 
 El módulo **crea la infraestructura y no despliega la aplicación**: eso lo hace `cd-main.yaml`. La separación es deliberada — el módulo heredado de Google mezclaba las dos cosas en un mismo `apply`, y así ni la infraestructura ni el despliegue se distinguían como piezas propias.
 
-**Al terminar la jornada la instancia se detiene, no se destruye.** Detenida cuesta del orden de 0.20 USD por día y conserva el disco, la IP elástica, el *kubeconfig* y la aplicación desplegada; volver es un comando. Destruirla obliga a recrearla, regenerar el secreto `KUBECONFIG_K3S` —porque k3s emite certificados nuevos— y volver a desplegar. El procedimiento completo está en [operar-el-cluster-de-aws.md](operar-el-cluster-de-aws.md).
+**Al terminar la jornada la instancia se detiene, no se destruye.** Detenida cuesta del orden de 0.20 USD por día y conserva el disco, la IP elástica, el *kubeconfig* y la aplicación desplegada; volver es un comando. Destruirla obliga a recrearla, recargar el *kubeconfig* en Vault —porque k3s emite certificados nuevos— y volver a desplegar. El procedimiento completo está en [operar-el-cluster-de-aws.md](operar-el-cluster-de-aws.md).
 
 ## Páginas relacionadas
 

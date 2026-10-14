@@ -67,7 +67,7 @@ La llave de Vault nace en su propia máquina y nunca sale de ahí. A la Mac solo
 
 Si se recrea la máquina, se genera una llave de Vault nueva y se firma otra vez con la misma autoridad. `vault-ca.crt` no cambia.
 
-**Si se pierde `ca.key`**, la siguiente corrida crea una autoridad nueva y cambia `vault-ca.crt`. Hay que subir el archivo nuevo al repo, volver a confiar en él en el llavero y cambiarlo en el pipeline (#80).
+**Si se pierde `ca.key`**, la siguiente corrida crea una autoridad nueva y cambia `vault-ca.crt`. Hay que subir el archivo nuevo al repo y volver a confiar en él en el llavero. El pipeline lo lee del repo (#80), así que con el commit basta.
 
 El certificado de Vault dura un año. Para renovarlo basta con correr el playbook de nuevo antes de que venza.
 
