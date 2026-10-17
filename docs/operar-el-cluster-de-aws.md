@@ -294,13 +294,41 @@ El `curl` tiene que regresar `HTTP/1.1 200 OK`. La IP la saco del kubeconfig y n
 | `RequestExpired` | Se acabó la sesión del lab. Seguramente la instancia está detenida. [Cambia las llaves](#1-levantar-el-lab-y-cambiar-las-llaves) |
 | `explicit deny` … `policy/voc-cancel-cred` | Lo mismo: AWS Academy bloqueó las llaves al cerrar la sesión. [Cámbialas](#1-levantar-el-lab-y-cambiar-las-llaves) |
 | `curl` regresa `000` | La instancia está apagada. Ve [cómo revisarlo](#revisar-si-la-instancia-está-encendida) |
-| El job falla en `Comprobar que Vault responde` | Vault está sellado o su máquina está detenida. El mensaje dice cuál. [Ábrelo](#3-abrir-vault) y dale **Re-run failed jobs** |
-| El job falla en `Leer los secretos de Vault` | Venció `VAULT_TOKEN` (dura 7 días). Renuévalo como dice [`vault/README.md`](../vault/README.md#renovar-el-token-del-pipeline) |
+| El job falla en `Comprobar que Vault responde` | Vault está sellado o su máquina está detenida. Ve [cuando el despliegue falla en Vault](#cuando-el-despliegue-falla-en-vault) |
+| El job falla en `Leer los secretos de Vault` | Venció `VAULT_TOKEN` o cambió la política. Ve [cuando el despliegue falla en Vault](#cuando-el-despliegue-falla-en-vault) |
 | El job falla en `Comprobar que el cluster responde` | La instancia está detenida. Enciéndela y dale **Re-run failed jobs** |
 | Error de TLS al conectar | El kubeconfig en Vault es de una instancia anterior. [Recárgalo](#si-la-instancia-no-existe) |
 | Un pod en `Pending` con `Insufficient cpu` | El límite de 2 vCPU del lab. Ve [despliegue-continuo.md](despliegue-continuo.md#qué-revisar-primero-cuando-falla) |
 | `emailservice` o `recommendationservice` con 1 reinicio | Es normal cuando arrancan los doce al mismo tiempo. Se arregla solo |
 | Todos en `ImagePullBackOff` | Alguna imagen de `ghcr.io` dejó de ser pública |
+
+### Cuando el despliegue falla en Vault
+
+Hay tres formas de que el pipeline se quede sin sus secretos. Las provoqué a propósito el 17 de octubre de 2026 (#81), y en las tres pasó lo mismo: el job murió en un paso de Vault, *Desplegar* y *Rollback automatico* quedaron `skipped`, y la tienda siguió contestando `200`. Ninguna toca el clúster, así que no hay prisa: se arregla la causa y se le da **Re-run failed jobs**.
+
+**Vault sellado.** Es la que va a pasar casi todos los días, porque Vault despierta sellado cada vez que se prende su máquina.
+
+- Cómo se ve: falla *Comprobar que Vault responde* con *"Vault esta sellado"*. Si en vez de eso dice *"Vault no responde"*, la máquina está apagada.
+- Cómo se arregla: [abrir Vault](#3-abrir-vault) con 2 pedazos de la llave.
+- La prueba: reinicié el servicio de Vault, que lo deja sellado igual que un reinicio de la máquina. `vault operator seal` no sirve aquí, porque pide un token raíz. [Run 39058378341](https://github.com/valentinodepaola/microservices-demo/actions/runs/39058378341).
+
+**Token vencido.** El token del pipeline dura 7 días.
+
+- Cómo se ve: *Comprobar que Vault responde* pasa, falla *Leer los secretos de Vault* con `Response code 403 (Forbidden)`, y *Explicar el fallo de Vault* deja el aviso del token. En la bitácora queda `invalid token`.
+- Cómo se arregla: [renovar el token](../vault/README.md#renovar-el-token-del-pipeline).
+- La prueba: un token de 2 minutos en `VAULT_TOKEN`, y lancé el CD cuando ya había vencido. [Run 39061666305](https://github.com/valentinodepaola/microservices-demo/actions/runs/39061666305).
+
+**Política cambiada.** Alguien le quitó a la política `pipeline` el permiso sobre uno de los secretos.
+
+- Cómo se ve: idéntico al token vencido en el log, porque Vault contesta 403 en los dos casos. La diferencia está en la bitácora: la ruta que sí tiene permiso sale `ok` y la otra sale `permission denied`, sin `invalid token`.
+- Cómo se arregla: `vault policy write pipeline vault/policies/pipeline.hcl`, con un token raíz. El archivo del repo es la versión buena.
+- La prueba: dejé la política solo con `boutique/data/kubeconfig`. `vault-action` leyó el kubeconfig, le negaron `redis-orders` y falló el paso entero: no despliega con la mitad de los secretos, y el Secret del clúster no se tocó. [Run 39062115380](https://github.com/valentinodepaola/microservices-demo/actions/runs/39062115380).
+
+Para saber cuál de las dos últimas es, este comando muestra las peticiones rechazadas desde una hora (cámbiala por la del run):
+
+```bash
+./ansible/ansible.sh ansible vault -b -m ansible.builtin.shell -a "jq -r 'select(.type==\"response\" and .error != null and .time > \"2026-10-17T19:13\") | \"\(.time) \(.request.path) \(.error)\"' /var/log/vault/audit.log"
+```
 
 ---
 
