@@ -10,6 +10,8 @@ Montado el 1 de septiembre de 2026 · issue #18 · [ADR 0008](adr/0008-despliegu
 
 Cualquier `push` a `main` — en la práctica, cada PR que se integra. `paths-ignore` filtra cambios que solo tocan `**/*.md`, `docs/**` o `LICENSE`: un PR que solo actualiza documentación no dispara un despliegue completo de 12 servicios.
 
+**También se puede lanzar a mano** desde la pestaña Actions, con *Run workflow* sobre `main`. Sirve cuando el `push` se perdió: el 17 de octubre de 2026 los workflows del fork amanecieron desactivados, el merge de #97 no disparó nada, y GitHub no repite los eventos que llegaron mientras estaban apagados. Lanzado desde otra rama, el job `deploy` falla, porque el Environment `aws-k3s` solo acepta ramas protegidas.
+
 ```
 merge a main → GitHub Actions → pruebas unitarias (ubuntu-24.04)
                                   ❌ → despliegue omitido, el clúster se queda como estaba

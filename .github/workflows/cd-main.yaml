@@ -8,10 +8,10 @@
 # Ver docs/despliegue-continuo.md.
 #
 # SEGURIDAD — las tres reglas del ADR 0008 siguen en pie, aunque una cambió de
-# motivo: solo `push` a main (regla 1, que ahora protege el token de Vault y
-# no el runner: un PR desde un fork nunca lo alcanza), environment declarado
-# (regla 2, sin revisor: ver el comentario del job deploy), y permissions:
-# contents: read (regla 3).
+# motivo: solo `push` a main o workflow_dispatch (regla 1, que ahora protege
+# el token de Vault y no el runner: un PR desde un fork nunca lo alcanza),
+# environment declarado (regla 2, sin revisor: ver el comentario del job
+# deploy), y permissions: contents: read (regla 3).
 
 name: "CD - Desplegar en cada merge a main"
 
@@ -22,6 +22,13 @@ on:
       - '**/*.md'
       - 'docs/**'
       - 'LICENSE'
+  # Para volver a desplegar sin un commit nuevo. Hizo falta el 17/10/2026: los
+  # workflows del fork amanecieron desactivados, el push del merge de #97 se
+  # perdio y GitHub no repite eventos que llegaron con los workflows apagados.
+  # Tambien sirve para las pruebas de #81. Desde una rama que no sea main
+  # falla en el job deploy: el Environment aws-k3s solo acepta ramas
+  # protegidas, asi que el token de Vault sigue sin salir de main.
+  workflow_dispatch:
 
 permissions:
   contents: read
