@@ -8,9 +8,10 @@
 # Ver docs/despliegue-continuo.md.
 #
 # SEGURIDAD — las tres reglas del ADR 0008 siguen en pie, aunque una cambió de
-# motivo: solo `push` a main (regla 1, que ahora protege el secreto del
-# kubeconfig y no el runner), environment declarado (regla 2, sin revisor: ver
-# el comentario del job deploy), y permissions: contents: read (regla 3).
+# motivo: solo `push` a main (regla 1, que ahora protege el token de Vault y
+# no el runner: un PR desde un fork nunca lo alcanza), environment declarado
+# (regla 2, sin revisor: ver el comentario del job deploy), y permissions:
+# contents: read (regla 3).
 
 name: "CD - Desplegar en cada merge a main"
 
@@ -199,8 +200,9 @@ jobs:
     # sandbox, con el fork publico. Un runner de GitHub es desechable y
     # aislado, asi que esa razon desaparece. El control humano sigue estando
     # en la proteccion de main, que exige PR y aprobacion para llegar hasta
-    # aca. El secreto del kubeconfig vive dentro de este Environment, limitado
-    # a ramas protegidas.
+    # aca. En este Environment, limitado a ramas protegidas, vive VAULT_TOKEN:
+    # el kubeconfig y la contrasena de redis-orders ya no estan en GitHub, el
+    # job se los pide a Vault (#80).
     environment:
       name: aws-k3s
       # La url deja el enlace a la tienda en la pestana Actions y en la vista
@@ -210,28 +212,107 @@ jobs:
     # Baja de 30 a 20: este job ya no construye imagenes, solo aplica. Lo que
     # queda son los 600s del kubectl wait y los 10 min del smoke test.
     timeout-minutes: 20
+    # Donde vive Vault. Sale de `terraform output vault_url`
+    # (terraform/aws/outputs.tf). Va escrita aqui y no como variable de GitHub
+    # porque si cambia la IP tambien hay que regenerar el certificado de la CA,
+    # que vive en el repo (ansible/vault-ca.crt): el cambio pasa por un commit
+    # de todos modos.
+    env:
+      VAULT_ADDR: https://98.94.123.92:8200
     steps:
       - uses: actions/checkout@v7
 
       - name: Marcar el inicio
         run: echo "INICIO=$(date +%s)" >> "$GITHUB_ENV"
 
+      - name: Comprobar que Vault responde
+        id: vault_salud
+        # Preflight de Vault, igual que el del cluster mas abajo. sys/health es
+        # la unica ruta que contesta sin token, y dice el estado con el codigo
+        # HTTP: 200 abierto, 503 sellado. Sin este paso, un Vault sellado haria
+        # fallar a vault-action con un error que no dice la causa.
+        #
+        # Vault despierta sellado cada vez que se prende su maquina, o sea,
+        # cada vez que se inicia el lab (ADR 0011). Va a pasar seguido.
+        #
+        # Tambien deja lista la CA para el siguiente paso: vault-action la pide
+        # en base64 y en una sola linea (-w0).
+        run: |
+          set -euo pipefail
+          CODIGO=$(curl --cacert ansible/vault-ca.crt --max-time 15 -s -o /dev/null \
+            -w '%{http_code}' "$VAULT_ADDR/v1/sys/health" || true)
+          case "$CODIGO" in
+            200)
+              echo "Vault esta abierto." ;;
+            503)
+              echo "::error::Vault esta sellado. Abrirlo con 2 pedazos de la llave ('vault operator unseal' dos veces, o desde la interfaz web) y darle Re-run failed jobs. Ver vault/README.md."
+              exit 1 ;;
+            000)
+              echo "::error::Vault no responde en $VAULT_ADDR. Lo mas probable es que su instancia de EC2 este detenida porque el lab esta apagado. Si la instancia esta encendida, revisar que el certificado de ansible/vault-ca.crt sea el de este Vault."
+              exit 1 ;;
+            *)
+              echo "::error::Vault respondio con el codigo $CODIGO. Revisar 'vault status'."
+              exit 1 ;;
+          esac
+          echo "ca=$(base64 -w0 ansible/vault-ca.crt)" >> "$GITHUB_OUTPUT"
+
+      - name: Leer los secretos de Vault
+        id: vault
+        # El pipeline ya no guarda las llaves: las pide (ADR 0011). Se presenta
+        # con VAULT_TOKEN, un token de solo lectura que vive en el Environment
+        # aws-k3s, y Vault le entrega el kubeconfig y la contrasena de
+        # redis-orders. Cada lectura queda en la bitacora de Vault.
+        #
+        # Las rutas llevan data/ porque el motor es KV version 2: los valores
+        # viven en boutique/data/ y la politica pipeline nombra esas rutas.
+        #
+        # exportEnv: false hace que los valores no queden como variables de
+        # entorno de todos los pasos que siguen (skaffold, kubectl, los smoke
+        # tests). Solo los reciben los dos pasos que los usan, por
+        # steps.vault.outputs.
+        uses: hashicorp/vault-action@v4.0.0
+        with:
+          url: ${{ env.VAULT_ADDR }}
+          method: token
+          token: ${{ secrets.VAULT_TOKEN }}
+          caCertificate: ${{ steps.vault_salud.outputs.ca }}
+          exportEnv: false
+          secrets: |
+            boutique/data/kubeconfig kubeconfig ;
+            boutique/data/redis-orders password | redis_password
+
+      - name: Explicar el fallo de Vault
+        # Solo corre si vault-action fallo. Si se llego hasta ahi, Vault esta
+        # abierto (lo comprobo el paso anterior), asi que el problema es el
+        # token o la politica. vault-action solo dice "permission denied".
+        #
+        # Sin if, un paso lleva un success() implicito y se salta despues de
+        # cualquier fallo. failure() es lo que lo deja correr justo entonces.
+        if: failure() && steps.vault.outcome == 'failure'
+        run: |
+          echo "::error::Vault esta abierto pero no entrego los secretos. Lo mas probable es que VAULT_TOKEN haya vencido (dura 7 dias) o que la politica pipeline ya no deje leer boutique/data/. Ver 'Renovar el token del pipeline' en vault/README.md."
+
       - name: Montar el kubeconfig del k3s
         # En la fase A bastaba `kubectl config use-context docker-desktop`
         # porque el kubeconfig ya vivia en la Mac. Un runner de GitHub arranca
         # limpio: no tiene ningun cluster configurado y hay que darselo.
         #
-        # El secreto guarda el archivo en base64, y no por seguridad —GitHub
-        # ya cifra los secretos— sino por transporte: un secreto es una cadena
-        # de texto y el kubeconfig es YAML con tres bloques de certificado.
-        # Crudo, cualquier reformateo en el camino lo rompe en silencio.
+        # Sale de Vault (paso "Leer los secretos de Vault"), crudo: configurar.sh
+        # lo sube tal cual desde el archivo. Antes vivia en el secreto
+        # KUBECONFIG_K3S en base64, que ya no existe (#80).
+        #
+        # Llega por env y no con ${{ }} dentro del run: ${{ }} pega el texto en
+        # el script antes de que bash lo lea, y un valor de varias lineas con
+        # comillas rompe el script. Por env, bash lo recibe como dato.
         #
         # Va a RUNNER_TEMP y no al workspace porque el workspace es lo que se
         # sube en los artefactos; RUNNER_TEMP se destruye con la maquina.
+        env:
+          KUBECONFIG_VAULT: ${{ steps.vault.outputs.kubeconfig }}
         run: |
           set -euo pipefail
           install -m 600 /dev/null "$RUNNER_TEMP/kubeconfig"
-          echo "${{ secrets.KUBECONFIG_K3S }}" | base64 -d > "$RUNNER_TEMP/kubeconfig"
+          printf '%s\n' "$KUBECONFIG_VAULT" > "$RUNNER_TEMP/kubeconfig"
           echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
 
       - name: Comprobar que el cluster responde
@@ -245,10 +326,34 @@ jobs:
         run: |
           set -euo pipefail
           if ! kubectl cluster-info --request-timeout=20s; then
-            echo "::error::El cluster de k3s no responde. Lo mas probable es que la instancia de EC2 este detenida: el laboratorio de AWS Academy la apaga al cerrar la sesion. Levantar el laboratorio, correr 'terraform apply' si hiciera falta, regenerar el secreto KUBECONFIG_K3S y reintentar este job."
+            echo "::error::El cluster de k3s no responde. Lo mas probable es que la instancia de EC2 este detenida: el laboratorio de AWS Academy la apaga al cerrar la sesion. Levantar el laboratorio, correr 'terraform apply' si hiciera falta y reintentar este job. Si se recreo el nodo, recargar el kubeconfig en Vault con vault/configurar.sh."
             exit 1
           fi
           kubectl get nodes -o wide
+
+      - name: Crear el Secret de redis-orders
+        # redis-orders y orderservice leen su contrasena del Secret redis-orders
+        # (#79). Antes lo creaba yo a mano; ahora sale de Vault en cada
+        # despliegue, asi que cambiarla en Vault basta para que el siguiente
+        # merge actualice el Secret. Redis y orderservice la leen al arrancar:
+        # si cambia, hay que reiniciarlos (ver el README del componente).
+        #
+        # Va despues del preflight del cluster y antes de Desplegar: sin el
+        # Secret, los pods se quedan en CreateContainerConfigError.
+        #
+        # --dry-run=client -o yaml no toca el cluster, solo arma el Secret, y
+        # apply lo crea o lo actualiza. Asi sirve igual si ya existe.
+        #
+        # printf '%s' y no echo: sin salto de linea al final. Con el, la
+        # contrasena queda de 49 caracteres y Redis no la acepta.
+        env:
+          REDIS_PASSWORD: ${{ steps.vault.outputs.redis_password }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REDIS_PASSWORD" \
+            | kubectl create secret generic redis-orders --from-file=password=/dev/stdin \
+                --dry-run=client -o yaml \
+            | kubectl apply -f -
 
       - name: Instalar skaffold
         # kubectl, kustomize y helm ya vienen en la imagen de ubuntu-24.04.

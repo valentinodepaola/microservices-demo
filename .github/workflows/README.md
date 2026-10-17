@@ -32,7 +32,7 @@ The job writes `build.json` with `--file-output` and uploads it as an artifact. 
 
 The `deploy` job, last in the chain. Since issue #37 it runs on `ubuntu-24.04` against the k3s cluster on EC2 described in [ADR 0010](../../docs/adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md), provisioned by [`terraform/aws/`](../../terraform/aws/README.md).
 
-It mounts the cluster's kubeconfig from the `KUBECONFIG_K3S` secret of the `aws-k3s` environment, checks that the cluster answers before doing anything, and then applies with:
+It checks that Vault is unsealed, reads the cluster's kubeconfig and the `redis-orders` password from Vault with a read-only token (the `VAULT_TOKEN` secret of the `aws-k3s` environment), checks that the cluster answers, creates the `redis-orders` Secret, and then applies with:
 
 ```
 skaffold deploy --build-artifacts=build.json

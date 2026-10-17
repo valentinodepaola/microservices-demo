@@ -31,15 +31,17 @@ Puedes crear ramas, hacer commits y abrir PRs con el lab cerrado. No hace falta 
 4. Job "imagenes"   (máquina de GitHub)         → construye las 12 y las sube a ghcr.io
                                                    + sube build.json como artefacto
 5. Job "deploy"     (máquina de GitHub)
-   ├─ monta el kubeconfig desde el secreto
+   ├─ ¿Vault está abierto?   ──── NO ──→ falla en unos segundos: "Vault está sellado" o "no responde"
+   ├─ le pide a Vault el kubeconfig y la contraseña de redis-orders
    ├─ ¿el clúster responde?  ──── NO ──→ falla en unos segundos: "el laboratorio está detenido"
+   ├─ crea el Secret de redis-orders con esa contraseña
    ├─ skaffold deploy (no construye: baja de ghcr.io)
    ├─ espera a los 12 Deployments
    ├─ smoke test: 50 peticiones, 0 errores
    └─ ✅  |  ❌ → rollback automático a la versión anterior
 ```
 
-Nadie tiene que aprobar el despliegue ni correr comandos. Lo único que se necesita es que la instancia de EC2 esté encendida.
+Nadie tiene que aprobar el despliegue ni correr comandos. Lo único que se necesita es que las dos instancias de EC2 (el clúster y Vault) estén encendidas y que Vault esté abierto.
 
 ### Lo que tiene que saber el equipo
 
@@ -47,10 +49,10 @@ Los merges de cualquiera se despliegan solos, también los de Alessia. Al pipeli
 
 Pero el clúster solo lo puedo encender yo, porque el lab de AWS Academy está en mi cuenta de Tecmilenio. Si alguien hace merge con el lab cerrado:
 
-- El job `deploy` falla en unos segundos con un mensaje que dice que la instancia está detenida.
+- El job `deploy` falla en unos segundos en el paso de Vault, con un mensaje que dice que no responde. Si el lab está prendido pero Vault sigue sellado, el mensaje dice eso.
 - No se rompe nada. El clúster no está encendido, así que no queda nada a medias.
 - Las imágenes sí se publican en `ghcr.io`, eso lo hace el job anterior.
-- Para arreglarlo, enciendo el lab y le doy **Re-run failed jobs** a esa ejecución. No hace falta un commit nuevo.
+- Para arreglarlo, enciendo el lab, abro Vault y le doy **Re-run failed jobs** a esa ejecución. No hace falta un commit nuevo. Vault también lo puede abrir Alessia, que tiene un pedazo de la llave, pero hacen falta dos.
 
 O sea: el despliegue es automático, pero que el clúster esté encendido depende de mí.
 
@@ -139,12 +141,13 @@ kubectl --kubeconfig ~/.kube/boutique-k3s.yaml get nodes -o wide
 
 Tiene que salir un nodo `Ready` con `ARCH` en `amd64`.
 
-**Este paso es fácil de olvidar:** cuando se crea una instancia nueva, k3s genera certificados nuevos. El kubeconfig que está guardado en el secreto de GitHub ya no sirve, porque es de la instancia anterior. Hay que actualizarlo:
+**Este paso es fácil de olvidar:** cuando se crea una instancia nueva, k3s genera certificados nuevos. El kubeconfig que está guardado en Vault, en `boutique/kubeconfig`, ya no sirve, porque es de la instancia anterior. Hay que actualizarlo ahí. Hace falta un token raíz: los pasos están en [`vault/README.md`](../vault/README.md), en *Generar un token raíz nuevo*. Con la sesión abierta, desde la raíz del repo:
 
 ```bash
-base64 -i ~/.kube/boutique-k3s.yaml | gh secret set KUBECONFIG_K3S \
-  -R valentinodepaola/microservices-demo --env aws-k3s
+./vault/configurar.sh
 ```
+
+`configurar.sh` ve que el kubeconfig cambió y lo carga. Al terminar, revoca el token raíz.
 
 > Si no lo actualizas, el job `deploy` pasa la revisión del clúster (el clúster sí responde) pero después falla con un error de TLS. Si ves un error de TLS, casi seguro es esto.
 
@@ -165,8 +168,6 @@ skaffold deploy --build-artifacts=/tmp/build.json
 ```
 
 Es el mismo comando que corre el workflow.
-
-El kubeconfig también vive en Vault, en `boutique/kubeconfig`, y hay que actualizarlo ahí. Hace falta un token raíz: los pasos están en [`vault/README.md`](../vault/README.md), en *Generar un token raíz nuevo* y *Configurar Vault*. `configurar.sh` ve que el kubeconfig cambió y lo carga.
 
 ### 3. Abrir Vault
 
@@ -211,9 +212,9 @@ aws ec2 stop-instances --instance-ids $(terraform output -raw instance_id) $(ter
 
 *(Son precios públicos aproximados: `m5.large` ~0.096 USD/h, disco gp3 de 30 GB ~0.08 USD/día, IP pública ~0.12 USD/día. No los pude revisar contra AWS porque el lab bloquea la API de precios.)*
 
-Detenida, el crédito de 50 USD alcanza para meses. Y para volver solo necesitas un comando y esperar un minuto, sin actualizar el secreto ni volver a desplegar.
+Detenida, el crédito de 50 USD alcanza para meses. Y para volver solo necesitas un comando y esperar un minuto, sin recargar el kubeconfig en Vault ni volver a desplegar.
 
-Si la destruyes, cada vez que vuelvas tienes que correr `terraform apply`, actualizar `KUBECONFIG_K3S` y volver a desplegar la tienda. Por 20 centavos al día no vale la pena.
+Si la destruyes, cada vez que vuelvas tienes que correr `terraform apply`, recargar el kubeconfig en Vault y volver a desplegar la tienda. Por 20 centavos al día no vale la pena.
 
 > **Ojo:** el lab enciende solo las instancias detenidas cuando abres la sesión. Si entras al lab para otra cosa, la instancia se enciende y empieza a gastar. Si no vas a usar el clúster, detenla otra vez.
 
@@ -293,8 +294,10 @@ El `curl` tiene que regresar `HTTP/1.1 200 OK`. La IP la saco del kubeconfig y n
 | `RequestExpired` | Se acabó la sesión del lab. Seguramente la instancia está detenida. [Cambia las llaves](#1-levantar-el-lab-y-cambiar-las-llaves) |
 | `explicit deny` … `policy/voc-cancel-cred` | Lo mismo: AWS Academy bloqueó las llaves al cerrar la sesión. [Cámbialas](#1-levantar-el-lab-y-cambiar-las-llaves) |
 | `curl` regresa `000` | La instancia está apagada. Ve [cómo revisarlo](#revisar-si-la-instancia-está-encendida) |
+| El job falla en `Comprobar que Vault responde` | Vault está sellado o su máquina está detenida. El mensaje dice cuál. [Ábrelo](#3-abrir-vault) y dale **Re-run failed jobs** |
+| El job falla en `Leer los secretos de Vault` | Venció `VAULT_TOKEN` (dura 7 días). Renuévalo como dice [`vault/README.md`](../vault/README.md#renovar-el-token-del-pipeline) |
 | El job falla en `Comprobar que el cluster responde` | La instancia está detenida. Enciéndela y dale **Re-run failed jobs** |
-| Error de TLS al conectar | El secreto `KUBECONFIG_K3S` es de una instancia anterior. Actualízalo |
+| Error de TLS al conectar | El kubeconfig en Vault es de una instancia anterior. [Recárgalo](#si-la-instancia-no-existe) |
 | Un pod en `Pending` con `Insufficient cpu` | El límite de 2 vCPU del lab. Ve [despliegue-continuo.md](despliegue-continuo.md#qué-revisar-primero-cuando-falla) |
 | `emailservice` o `recommendationservice` con 1 reinicio | Es normal cuando arrancan los doce al mismo tiempo. Se arregla solo |
 | Todos en `ImagePullBackOff` | Alguna imagen de `ghcr.io` dejó de ser pública |
@@ -325,9 +328,8 @@ cd terraform/aws && terraform output tienda_url
 # Entrar a la máquina (sin SSH)
 aws ssm start-session --target $(terraform output -raw instance_id)
 
-# Actualizar el secreto (solo si creaste la instancia de nuevo)
-base64 -i ~/.kube/boutique-k3s.yaml | gh secret set KUBECONFIG_K3S \
-  -R valentinodepaola/microservices-demo --env aws-k3s
+# Recargar el kubeconfig en Vault (solo si creaste la instancia de nuevo; pide token raíz)
+./vault/configurar.sh
 
 # ¿Vault está abierto? (con VAULT_ADDR y VAULT_CACERT exportados)
 vault status

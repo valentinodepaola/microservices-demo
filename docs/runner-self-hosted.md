@@ -6,7 +6,7 @@ Montado el 1 de septiembre de 2026 · issue #17 · [ADR 0008](adr/0008-despliegu
 
 > **Desde el 20 de septiembre de 2026 este runner ya no despliega.** El issue #37 movió el job `deploy` de `cd-main.yaml` a `ubuntu-24.04` y al clúster de k3s sobre EC2 — es la fase B del ADR 0008, con el destino que fijó el [ADR 0010](adr/0010-fase-b-en-aws-con-k3s-sobre-ec2.md).
 >
-> **La página se conserva entera y a propósito.** Es el registro de cómo se llegó hasta acá, y varias de las cosas que explica siguen vigentes en otra forma: las tres reglas de seguridad del ADR 0008 se mantienen —la 1 ahora protege el secreto del *kubeconfig* en vez del runner—, y el diagnóstico del llavero de macOS explica 48 líneas que el issue #37 borró de `cd-main.yaml`.
+> **La página se conserva entera y a propósito.** Es el registro de cómo se llegó hasta acá, y varias de las cosas que explica siguen vigentes en otra forma: las tres reglas de seguridad del ADR 0008 se mantienen —la 1 ahora protege el token de Vault en vez del runner—, y el diagnóstico del llavero de macOS explica 48 líneas que el issue #37 borró de `cd-main.yaml`.
 >
 > El runner sigue instalado y [`runner-check.yaml`](../.github/workflows/runner-check.yaml) sigue funcionando; lo que ya no hay es un workflow que los use para desplegar. Dónde despliega hoy: [despliegue-continuo.md](despliegue-continuo.md).
 

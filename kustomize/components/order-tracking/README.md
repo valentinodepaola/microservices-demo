@@ -51,7 +51,7 @@ Redis y `orderservice` leen la contraseña al arrancar, así que si la cambias n
 kubectl rollout restart deploy/redis-orders deploy/orderservice
 ```
 
-Mientras no entre #80, el Secret del clúster de AWS lo creo yo a mano con el comando de arriba. Con #80 lo crea el pipeline en cada despliegue.
+En el clúster de AWS no hace falta crearlo a mano: desde #80, `cd-main.yaml` lo crea o lo actualiza en cada despliegue con lo que lee de Vault. Pero si cambias la contraseña en Vault, el despliegue actualiza el Secret y no reinicia a nadie: después del merge todavía tienes que correr el `rollout restart` de arriba. El comando a mano queda para un clúster local.
 
 ## Cómo sabe Kubernetes si `orderservice` está sano
 
