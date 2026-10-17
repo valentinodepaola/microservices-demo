@@ -72,15 +72,18 @@ Una política es una lista de rutas y de lo que se puede hacer en cada una. Todo
 
 ### Renovar el token del pipeline
 
-El primero se creó el 11 de octubre de 2026 y vence el 18. Cuando venza, el pipeline va a fallar en el paso de Vault. Con un token raíz nuevo y la sesión abierta (`vault login`):
+El de ahora lo creé el 17 de octubre de 2026 y vence el 24. Cuando venza, el pipeline va a fallar en *Leer los secretos de Vault* (#81). Con un token raíz nuevo y la sesión abierta (`vault login -no-print`, para que no imprima el token):
 
 ```bash
+setopt pipefail
 vault token create -orphan -no-default-policy -policy=pipeline -ttl=168h \
   -display-name=pipeline -field=token \
   | gh secret set VAULT_TOKEN --env aws-k3s -R valentinodepaola/microservices-demo
 ```
 
-El token va directo de Vault a GitHub sin imprimirse. Si el anterior todavía no vencía, revócalo por su *accessor*, un identificador público que sirve para revocar sin conocer el token:
+El token va directo de Vault a GitHub sin imprimirse. El `setopt pipefail` no es adorno: sin él, si `vault` falla (por ejemplo, porque esa terminal no tiene `VAULT_ADDR`), `gh` igual corre y guarda el secreto **vacío**. Me pasó el 17 de octubre.
+
+Al sobrescribir el secreto, el token anterior se pierde: GitHub no deja leer los secretos. Pero en Vault sigue vivo hasta que vence, así que hay que revocarlo por su *accessor*, un identificador público que sirve para revocar sin conocer el token:
 
 ```bash
 vault list -format=json auth/token/accessors | jq -r '.[]' | while read a; do
