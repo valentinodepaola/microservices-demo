@@ -82,6 +82,11 @@ type frontendServer struct {
 	adSvcAddr string
 	adSvcConn *grpc.ClientConn
 
+	// orderservice es opcional: solo se conecta con ENABLE_ORDER_TRACKING=true
+	// (ADR 0007). Con el seguimiento apagado se queda en nil y no se usa.
+	orderSvcAddr string
+	orderSvcConn *grpc.ClientConn
+
 	collectorAddr string
 	collectorConn *grpc.ClientConn
 
@@ -146,6 +151,16 @@ func main() {
 	mustConnGRPC(ctx, &svc.checkoutSvcConn, svc.checkoutSvcAddr)
 	mustConnGRPC(ctx, &svc.adSvcConn, svc.adSvcAddr)
 
+	// ORDER_SERVICE_ADDR se lee después de revisar el interruptor: el
+	// despliegue por defecto no la define y mustMapEnv hace panic sin ella.
+	if orderTrackingEnabled {
+		log.Info("Order tracking enabled.")
+		mustMapEnv(&svc.orderSvcAddr, "ORDER_SERVICE_ADDR")
+		mustConnGRPC(ctx, &svc.orderSvcConn, svc.orderSvcAddr)
+	} else {
+		log.Info("Order tracking disabled.")
+	}
+
 	r := mux.NewRouter()
 	r.HandleFunc(baseUrl+"/", svc.homeHandler).Methods(http.MethodGet, http.MethodHead)
 	r.HandleFunc(baseUrl+"/product/{id}", svc.productHandler).Methods(http.MethodGet, http.MethodHead)
@@ -156,6 +171,9 @@ func main() {
 	r.HandleFunc(baseUrl+"/logout", svc.logoutHandler).Methods(http.MethodGet)
 	r.HandleFunc(baseUrl+"/cart/checkout", svc.placeOrderHandler).Methods(http.MethodPost)
 	r.HandleFunc(baseUrl+"/assistant", svc.assistantHandler).Methods(http.MethodGet)
+	if orderTrackingEnabled {
+		r.HandleFunc(baseUrl+"/rastreo", svc.trackingHandler).Methods(http.MethodGet, http.MethodHead)
+	}
 	r.PathPrefix(baseUrl + "/static/").Handler(http.StripPrefix(baseUrl+"/static/", http.FileServer(http.Dir("./static/"))))
 	r.HandleFunc(baseUrl+"/robots.txt", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "User-agent: *\nDisallow: /") })
 	r.HandleFunc(baseUrl+"/_healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, "ok") })
