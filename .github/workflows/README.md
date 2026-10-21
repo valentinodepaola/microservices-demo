@@ -16,7 +16,7 @@ We also host a test GKE cluster, which is where the deploy tests run. Every PR h
 
 Go and C# unit tests run in three places:
 
-- `ci-pr.yaml` on every commit of every open PR: Go tests for `shippingservice`, `productcatalogservice`, `checkoutservice`, `orderservice` and `frontend/validator`, and C# tests for `cartservice`. The `code-tests` job has no `paths-ignore` on purpose, because it is a required check on main and a required check that never runs leaves the PR waiting forever. Instead, its first step looks at the changed files: if the PR only touches docs, `LICENSE`, `kustomize/`, `terraform/` or `helm-chart/`, the tests are skipped and the check still reports green.
+- `ci-pr.yaml` on every commit of every open PR: Go tests for `shippingservice`, `productcatalogservice`, `checkoutservice`, `orderservice`, `frontend` and `frontend/validator`, and C# tests for `cartservice`. The `code-tests` job has no `paths-ignore` on purpose, because it is a required check on main and a required check that never runs leaves the PR waiting forever. Instead, its first step looks at the changed files: if the PR only touches docs, `LICENSE`, `kustomize/`, `terraform/` or `helm-chart/`, the tests are skipped and the check still reports green.
 - `cd-main.yaml` on every push to main, as the `pruebas` job, with the same list as `ci-pr.yaml`. Both the `imagenes` and `deploy` jobs `needs:` it, so a commit with failing tests is never built or deployed. See [docs/despliegue-continuo.md](../../docs/despliegue-continuo.md#las-pruebas-van-primero).
 - `ci-main.yaml` on pushes to `release/*` branches, or when run manually. It does not run on main, so the tests that gate a deployment live in a single place.
 
