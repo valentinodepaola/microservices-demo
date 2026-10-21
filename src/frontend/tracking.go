@@ -101,7 +101,7 @@ type productLookup func(ctx context.Context, id string) (*pb.Product, error)
 // catálogo al pintar, igual que el carrito. Si el catálogo falla para un
 // producto (NotFound o cualquier otro error), esa línea se degrada al
 // product_id y la pantalla no truena.
-func buildTrackingView(ctx context.Context, log logrus.FieldLogger, order *pb.TrackedOrder, now time.Time, lookup productLookup) trackingOrderView {
+func buildTrackingView(ctx context.Context, log logrus.FieldLogger, order *pb.TrackedOrder, lookup productLookup) trackingOrderView {
 	view := trackingOrderView{
 		TrackingID:  order.GetShippingTrackingId(),
 		StatusLabel: trackingStatusLabel(order.GetStatus()),
@@ -126,12 +126,21 @@ func buildTrackingView(ctx context.Context, log logrus.FieldLogger, order *pb.Tr
 		view.Items = append(view.Items, item)
 	}
 
-	for _, step := range order.GetTimeline() {
+	// Qué etapas ya pasaron sale del estado que calculó orderservice, no del
+	// reloj del frontend: con unos segundos de desfase entre pods, la etapa
+	// actual saldría sin marcar o la siguiente marcada antes de tiempo.
+	current := -1
+	for i, step := range order.GetTimeline() {
+		if step.GetStatus() == order.GetStatus() {
+			current = i
+		}
+	}
+	for i, step := range order.GetTimeline() {
 		view.Timeline = append(view.Timeline, trackingStepView{
 			Label:    trackingStatusLabel(step.GetStatus()),
 			StartsAt: formatTrackingTime(step.GetStartsAtUnix()),
-			Reached:  step.GetStartsAtUnix() <= now.Unix(),
-			Current:  step.GetStatus() == order.GetStatus(),
+			Reached:  i <= current,
+			Current:  i == current,
 		})
 	}
 	return view
@@ -184,7 +193,7 @@ func (fe *frontendServer) trackingHandler(w http.ResponseWriter, r *http.Request
 		var msg string
 		code, msg = trackingResult(trackingID, err)
 		if code == http.StatusOK {
-			view := buildTrackingView(r.Context(), log, order, time.Now(), fe.getProduct)
+			view := buildTrackingView(r.Context(), log, order, fe.getProduct)
 			data["order"] = &view
 		} else {
 			data["message"] = msg

@@ -92,8 +92,7 @@ func TestTrackingStatusLabel(t *testing.T) {
 }
 
 func TestBuildTrackingView(t *testing.T) {
-	now := time.Unix(testPurchasedAt+200, 0) // ya en tránsito, aún no entregado
-	v := buildTrackingView(context.Background(), quietLogger(), testOrder(), now, fakeLookup)
+	v := buildTrackingView(context.Background(), quietLogger(), testOrder(), fakeLookup)
 
 	if v.TrackingID != testTrackingID || v.StatusLabel != "En tránsito" || v.Delivered {
 		t.Errorf("header = %q / %q / delivered=%v", v.TrackingID, v.StatusLabel, v.Delivered)
@@ -131,6 +130,23 @@ func TestBuildTrackingView(t *testing.T) {
 		}
 		if s.Current != (i == 3) {
 			t.Errorf("step %d (%s) current = %v", i, s.Label, s.Current)
+		}
+	}
+}
+
+// orderservice ya dice "En preparación" pero según el reloj del frontend la
+// etapa todavía no empieza (desfase entre pods). Manda el estado del servidor.
+func TestTimelineFollowsServerStatus(t *testing.T) {
+	order := testOrder()
+	order.Status = pb.OrderStatus_ORDER_STATUS_PREPARING
+	future := time.Now().Add(time.Hour).Unix()
+	order.Timeline[2].StartsAtUnix = future
+	order.Timeline[3].StartsAtUnix = future + 60
+
+	v := buildTrackingView(context.Background(), quietLogger(), order, fakeLookup)
+	for i, s := range v.Timeline {
+		if s.Reached != (i <= 2) || s.Current != (i == 2) {
+			t.Errorf("step %d (%s) reached=%v current=%v", i, s.Label, s.Reached, s.Current)
 		}
 	}
 }
@@ -248,7 +264,7 @@ func TestTrackingHandler(t *testing.T) {
 // La vista nunca debe llevar dirección ni correo (ADR 0009): TrackedOrder ya
 // no los trae, y trackingOrderView no tiene dónde ponerlos.
 func TestTrackingViewHasNoPersonalData(t *testing.T) {
-	v := buildTrackingView(context.Background(), quietLogger(), testOrder(), time.Now(), fakeLookup)
+	v := buildTrackingView(context.Background(), quietLogger(), testOrder(), fakeLookup)
 	s := strings.ToLower(strings.Join([]string{v.TrackingID, v.StatusLabel, v.PurchasedAt}, " "))
 	for _, bad := range []string{"@", "street", "calle"} {
 		if strings.Contains(s, bad) {
