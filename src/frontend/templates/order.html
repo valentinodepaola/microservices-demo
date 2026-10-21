@@ -63,6 +63,11 @@
             </div>
             <div class="row">
                 <div class="col-12 text-center">
+                    {{ if $.order_tracking_enabled }}
+                    <a class="cymbal-button-secondary" href="{{ $.baseUrl }}/rastreo?id={{.order.ShippingTrackingId}}" role="button">
+                        Rastrear pedido
+                    </a>
+                    {{ end }}
                     <a class="cymbal-button-primary" href="{{ $.baseUrl }}/" role="button">
                         Continue Shopping
                     </a>

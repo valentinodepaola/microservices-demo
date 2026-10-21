@@ -38,6 +38,9 @@
     <link rel="stylesheet" type="text/css" href="{{ $.baseUrl }}/static/styles/styles.css">
     <link rel="stylesheet" type="text/css" href="{{ $.baseUrl }}/static/styles/cart.css">
     <link rel="stylesheet" type="text/css" href="{{ $.baseUrl }}/static/styles/order.css">
+    {{ if $.order_tracking_enabled }}
+    <link rel="stylesheet" type="text/css" href="{{ $.baseUrl }}/static/styles/tracking.css">
+    {{ end }}
     <link rel="stylesheet" type="text/css" href="{{ $.baseUrl }}/static/styles/bot.css">
     {{ if $.is_cymbal_brand }}
     <link rel='shortcut icon' type='image/x-icon' href='{{ $.baseUrl }}/static/favicon-cymbal.ico' />
@@ -80,6 +83,12 @@
                             <img src="{{ $.baseUrl }}/static/icons/Hipster_DownArrow.svg" alt="" class="icon arrow" />
                         </div>
                     </div>
+                    {{ end }}
+
+                    {{ if $.order_tracking_enabled }}
+                    <a href="{{ $.baseUrl }}/rastreo" class="cart-link tracking-link" title="Rastrear pedido">
+                        Rastrear pedido
+                    </a>
                     {{ end }}
 
                     {{ if $.assistant_enabled }}
