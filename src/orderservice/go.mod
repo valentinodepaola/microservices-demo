@@ -2,7 +2,7 @@ module github.com/GoogleCloudPlatform/microservices-demo/src/orderservice
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/redis/go-redis/v9 v9.22.0
