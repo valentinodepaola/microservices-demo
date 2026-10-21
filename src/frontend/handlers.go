@@ -562,6 +562,8 @@ func injectCommonTemplateData(r *http.Request, payload map[string]interface{}) m
 		"currentYear":       time.Now().Year(),
 		"baseUrl":           baseUrl,
 	}
+	// Enlace y hoja de estilos de la pantalla de rastreo (#32).
+	data["order_tracking_enabled"] = orderTrackingEnabled
 
 	for k, v := range payload {
 		data[k] = v

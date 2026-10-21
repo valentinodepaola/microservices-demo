@@ -1,0 +1,145 @@
+/**
+ * Copyright 2026 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Pantalla de rastreo (#32). */
+
+header .tracking-link {
+    font-size: 14px;
+    color: inherit;
+    white-space: nowrap;
+}
+
+.tracking-section {
+    max-width: 640px;
+    padding-top: 56px;
+    padding-bottom: 120px;
+}
+
+.tracking-section h3 {
+    margin: 0;
+    font-size: 36px;
+    font-weight: normal;
+}
+
+.tracking-section p {
+    margin-top: 8px;
+}
+
+.tracking-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 16px;
+    margin-top: 24px;
+}
+
+.tracking-form .cymbal-form-field {
+    flex: 1 1 260px;
+    margin: 0;
+}
+
+.tracking-form input {
+    width: 100%;
+}
+
+.tracking-message {
+    margin-top: 24px;
+    padding: 16px;
+    border-left: 4px solid #e5594f;
+    background: #fff;
+}
+
+.tracking-result {
+    margin-top: 32px;
+}
+
+.tracking-section .padding-y-24 {
+    padding-top: 24px;
+    padding-bottom: 24px;
+}
+
+.tracking-section .border-bottom-solid {
+    border-bottom: 1px solid rgba(154, 160, 166, 0.5);
+}
+
+.tracking-status {
+    font-weight: 700;
+}
+
+.tracking-status-delivered {
+    color: #1e7e34;
+}
+
+.tracking-timeline {
+    list-style: none;
+    margin: 24px 0;
+    padding: 0;
+}
+
+.tracking-timeline li {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 8px 0 8px 28px;
+    position: relative;
+    color: #9aa0a6;
+}
+
+.tracking-timeline li::before {
+    content: "";
+    position: absolute;
+    left: 6px;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    margin-top: -5px;
+    border-radius: 50%;
+    border: 2px solid #9aa0a6;
+    background: #fff;
+}
+
+.tracking-timeline li.reached {
+    color: inherit;
+}
+
+.tracking-timeline li.reached::before {
+    border-color: #1e7e34;
+    background: #1e7e34;
+}
+
+.tracking-timeline li.current .tracking-step-label {
+    font-weight: 700;
+}
+
+.tracking-items-title {
+    margin-top: 32px;
+    padding: 0;
+    font-size: 20px;
+}
+
+/* El catálogo no encontró el producto: se muestra el product_id (ADR 0004). */
+.tracking-no-image {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 1 / 1;
+    border-radius: 20px;
+    background: #eceff1;
+    color: #5c6063;
+    font-size: 14px;
+    text-align: center;
+    padding: 8px;
+}

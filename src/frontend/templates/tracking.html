@@ -1,0 +1,124 @@
+<!--
+ Copyright 2026 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+{{/* Pantalla de rastreo (#32). Solo se pinta con ENABLE_ORDER_TRACKING=true.
+     No muestra direccion, correo ni datos personales (ADR 0009). */}}
+{{ define "tracking" }}
+
+    {{ template "header" . }}
+
+    <div {{ with $.platform_css }} class="{{.}}" {{ end }}>
+        <span class="platform-flag">
+            {{$.platform_name}}
+        </span>
+    </div>
+
+    <main role="main" class="order tracking">
+
+        <section class="container tracking-section">
+            <div class="row">
+                <div class="col-12 text-center">
+                    <h3>Rastrea tu pedido</h3>
+                    <p>Escribe el número de rastreo de tu confirmación de compra.</p>
+                </div>
+            </div>
+
+            <form class="tracking-form" method="GET" action="{{ $.baseUrl }}/rastreo">
+                <div class="cymbal-form-field">
+                    <label for="tracking_id">Número de rastreo</label>
+                    <input type="text" id="tracking_id" name="id" value="{{ $.tracking_id }}"
+                        placeholder="XX-000-000000" autocomplete="off" spellcheck="false">
+                </div>
+                <button class="cymbal-button-primary" type="submit">Consultar</button>
+            </form>
+
+            {{ with $.message }}
+            <div class="tracking-message" role="alert">{{ . }}</div>
+            {{ end }}
+
+            {{ with $.order }}
+            <div class="tracking-result">
+                <div class="row border-bottom-solid padding-y-24">
+                    <div class="col-6 pl-md-0">Tracking #</div>
+                    <div class="col-6 pr-md-0 text-right">{{ .TrackingID }}</div>
+                </div>
+                <div class="row border-bottom-solid padding-y-24">
+                    <div class="col-6 pl-md-0">Estado</div>
+                    <div class="col-6 pr-md-0 text-right">
+                        <span class="tracking-status{{ if .Delivered }} tracking-status-delivered{{ end }}">{{ .StatusLabel }}</span>
+                    </div>
+                </div>
+                <div class="row border-bottom-solid padding-y-24">
+                    <div class="col-6 pl-md-0">Fecha de compra</div>
+                    <div class="col-6 pr-md-0 text-right">{{ .PurchasedAt }}</div>
+                </div>
+
+                {{ if .Timeline }}
+                <ol class="tracking-timeline">
+                    {{ range .Timeline }}
+                    <li class="{{ if .Reached }}reached{{ end }}{{ if .Current }} current{{ end }}">
+                        <span class="tracking-step-label">{{ .Label }}</span>
+                        <span class="tracking-step-time">{{ .StartsAt }}</span>
+                    </li>
+                    {{ end }}
+                </ol>
+                {{ end }}
+
+                <h4 class="tracking-items-title">Productos</h4>
+                {{ range .Items }}
+                <div class="row cart-summary-item-row">
+                    <div class="col-md-4 pl-md-0">
+                        {{ with .Product }}
+                        <a href="{{ $.baseUrl }}/product/{{ .Id }}">
+                            <img class="img-fluid" alt="" src="{{ $.baseUrl }}{{ .Picture }}" />
+                        </a>
+                        {{ else }}
+                        <div class="tracking-no-image">Producto no disponible</div>
+                        {{ end }}
+                    </div>
+                    <div class="col-md-8 pr-md-0">
+                        <div class="row">
+                            <div class="col">
+                                {{ with .Product }}<h4>{{ .Name }}</h4>{{ else }}<h4>{{ .ProductID }}</h4>{{ end }}
+                            </div>
+                        </div>
+                        <div class="row cart-summary-item-row-item-id-row">
+                            <div class="col">SKU #{{ .ProductID }}</div>
+                        </div>
+                        <div class="row">
+                            <div class="col">Cantidad: {{ .Quantity }}</div>
+                            {{ with .Price }}
+                            <div class="col pr-md-0 text-right"><strong>{{ renderMoney . }}</strong></div>
+                            {{ end }}
+                        </div>
+                    </div>
+                </div>
+                {{ end }}
+
+                {{ with .Total }}
+                <div class="row padding-y-24">
+                    <div class="col-6 pl-md-0">Total pagado</div>
+                    <div class="col-6 pr-md-0 text-right">{{ renderMoney . }}</div>
+                </div>
+                {{ end }}
+            </div>
+            {{ end }}
+        </section>
+
+    </main>
+
+    {{ template "footer" . }}
+{{ end }}

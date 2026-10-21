@@ -62,7 +62,7 @@ jobs:
       - name: Pruebas de Go
         timeout-minutes: 10
         run: |
-          for GO_PACKAGE in "shippingservice" "productcatalogservice" "checkoutservice" "orderservice" "frontend/validator"; do
+          for GO_PACKAGE in "shippingservice" "productcatalogservice" "checkoutservice" "orderservice" "frontend" "frontend/validator"; do
             echo "Probando $GO_PACKAGE..."
             pushd src/$GO_PACKAGE
             go test
