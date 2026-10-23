@@ -98,6 +98,14 @@ metadata:
   labels:
     app: redis-cart
 spec:
+  # Recreate y no RollingUpdate: con el disco, el Redis viejo tiene que
+  # apagarse (y guardar) antes de que el nuevo lea la misma carpeta. Si no,
+  # conviven un momento y el viejo pisa lo que el nuevo ya escribio (#90).
+  # rollingUpdate: null borra lo que Kubernetes rellena solo; sin eso,
+  # kubectl apply rechaza el cambio de estrategia.
+  strategy:
+    type: Recreate
+    rollingUpdate: null
   selector:
     matchLabels:
       app: redis-cart
@@ -121,6 +129,10 @@ spec:
           privileged: false
           readOnlyRootFilesystem: true
         image: redis:alpine
+        # appendonly: apunta cada escritura en el disco, no solo una foto de
+        # vez en cuando. Si el lab se apaga de golpe se pierde a lo mucho un
+        # segundo de carritos (#90).
+        args: ["--appendonly", "yes"]
         ports:
         - containerPort: 6379
         readinessProbe:
@@ -143,7 +155,25 @@ spec:
             memory: 200Mi
       volumes:
       - name: redis-data
-        emptyDir: {}
+        # Antes era un emptyDir, que se borra con el pod, y cada despliegue
+        # recrea el pod (#90). El disco sobrevive a eso y a apagar el lab.
+        persistentVolumeClaim:
+          claimName: redis-cart-data
+---
+# Sin storageClassName usa la clase por omision: local-path en k3s, que
+# guarda en el disco del nodo (/var/lib/rancher/k3s/storage), y hostpath en
+# Docker Desktop. Solo se pierde si se destruye la instancia.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-cart-data
+  labels:
+    app: redis-cart
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: Service

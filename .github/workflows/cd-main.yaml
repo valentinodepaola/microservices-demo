@@ -424,10 +424,10 @@ jobs:
           done
 
       - name: Contar los pedidos que ya habia en redis-orders
-        # Punto de partida del smoke test de redis-orders. Hoy redis-orders
-        # se recrea en cada despliegue y arranca vacio: skaffold le pone a la
-        # plantilla la etiqueta run-id con un valor nuevo (#90). Pero los
-        # pedidos no expiran, y si eso se arregla quedarian pedidos viejos.
+        # Punto de partida del smoke test de redis-orders. Los pedidos no
+        # expiran y redis-orders los guarda en un disco que sobrevive a los
+        # despliegues (#90), asi que desde el segundo merge siempre hay
+        # pedidos viejos.
         # El smoke test exige que el numero CREZCA, no solo que sea mayor a 0.
         #
         # redis-orders pide contrasena (#79). redis-cli se autentica DENTRO
@@ -537,8 +537,8 @@ jobs:
         run: |
           # redis-cart y redis-orders quedan fuera a proposito: usan
           # redis:alpine, imagen fija, y entre una revision y otra solo
-          # cambia la etiqueta run-id. Un rollout undo no les arregla nada y
-          # los recrearia, vaciandolos otra vez (#90).
+          # cambia la etiqueta run-id. Un rollout undo no les arregla nada,
+          # solo los reiniciaria.
           for d in adservice cartservice checkoutservice currencyservice \
                    emailservice frontend loadgenerator orderservice \
                    paymentservice productcatalogservice recommendationservice \
