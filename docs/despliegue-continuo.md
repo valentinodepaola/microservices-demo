@@ -93,10 +93,20 @@ El paso *Desplegar* corre `skaffold deploy -p order-tracking`. El perfil cambia 
 Con el perfil vienen tres cambios más en el workflow:
 
 - `orderservice` y `redis-orders` están en la lista de *Esperar a que los Deployments esten disponibles*. Si no, el smoke test de abajo podría correr antes de que Redis esté listo y fallar por una carrera.
-- `orderservice` está en la lista del *Rollback automatico*. `redis-orders` no, por la misma razón que `redis-cart`: su imagen es fija.
-- Un segundo smoke test, *los pedidos llegan a redis-orders*, revisa con `redis-cli DBSIZE` que después del tráfico del `loadgenerator` haya pedidos **nuevos**. Eso comprueba el camino checkout → `orderservice` → Redis. No basta con que haya al menos uno: los pedidos no expiran y `redis-orders` no se reinicia entre despliegues, así que desde el segundo merge siempre quedan pedidos viejos. Por eso el paso *Contar los pedidos que ya habia en redis-orders* guarda el número justo después de la espera, y el smoke test exige que crezca. Desde #79 `redis-orders` pide contraseña: los dos pasos corren `redis-cli` dentro del pod con `REDISCLI_AUTH`, tomada de la variable `REDIS_PASSWORD` del contenedor, así que la contraseña nunca llega al runner. Si la autenticación falla, `NOAUTH` no trae dígitos y el conteo da 0, y el smoke test falla diciendo que no llegaron pedidos: lo primero es revisar el Secret `redis-orders`.
+- `orderservice` está en la lista del *Rollback automatico*. `redis-orders` no, por la misma razón que `redis-cart`, que está explicada en el rollback.
+- Un segundo smoke test, *los pedidos llegan a redis-orders*, revisa con `redis-cli DBSIZE` que después del tráfico del `loadgenerator` haya pedidos **nuevos**. Eso comprueba el camino checkout → `orderservice` → Redis. No basta con que haya al menos uno: los pedidos no expiran y `redis-orders` ya no se recrea entre despliegues (ver [Los Redis no se recrean en cada despliegue](#los-redis-no-se-recrean-en-cada-despliegue)), así que desde el segundo merge siempre quedan pedidos viejos. Por eso el paso *Contar los pedidos que ya habia en redis-orders* guarda el número justo después de la espera, y el smoke test exige que crezca. Desde #79 `redis-orders` pide contraseña: los dos pasos corren `redis-cli` dentro del pod con `REDISCLI_AUTH`, tomada de la variable `REDIS_PASSWORD` del contenedor, así que la contraseña nunca llega al runner. Si la autenticación falla, `NOAUTH` no trae dígitos y el conteo da 0, y el smoke test falla diciendo que no llegaron pedidos: lo primero es revisar el Secret `redis-orders`.
 
 Para desplegar sin seguimiento basta con quitar `-p order-tracking` del paso *Desplegar* (y el segundo smoke test, que fallaría siempre).
+
+## Los Redis no se recrean en cada despliegue
+
+Skaffold le pone a cada Deployment la etiqueta `skaffold.dev/run-id`, con un valor nuevo en cada despliegue. Hasta #90 esa etiqueta llegaba a la plantilla del pod, y para Kubernetes eso ya era un cambio: recreaba todos los pods aunque nada más hubiera cambiado. A los servicios les da igual, porque su imagen cambia en cada merge de todos modos. Pero `redis-cart` y `redis-orders` guardan sus datos en un `emptyDir`, que se borra con el pod, así que cualquier merge, aunque solo tocara un README, vaciaba los carritos y los pedidos.
+
+La regla `resourceSelector` de `skaffold.yaml` le dice a Skaffold que no ponga etiquetas en los Deployments. Como la imagen de los Redis es fija, su plantilla ya no cambia y conservan los datos entre despliegues. El primer merge con la regla todavía los recrea una vez, porque la etiqueta desaparece de la plantilla.
+
+El costo es que el `status-check` de Skaffold busca los Deployments por esa etiqueta y ya no encuentra ninguno. Esperarlos queda a cargo del paso *Esperar a que los Deployments esten disponibles*, que ya los esperaba uno por uno.
+
+Esto no los vuelve almacenamiento duradero: si el pod se elimina por otra razón, los datos se pierden igual ([ADR 0004](adr/0004-redis-con-el-pedido-serializado-como-un-valor.md)).
 
 ## La caché de artefactos de Skaffold
 
@@ -140,7 +150,7 @@ La condición es `failure() && steps.deploy.outcome != 'skipped'`, y ese `!= 'sk
 
 `!= 'skipped'` distingue los dos casos que sí son distintos: si el preflight falló porque el clúster no responde, el paso queda omitido y no se intenta revertir nada contra una instancia apagada.
 
-**`redis-cart` queda afuera a propósito.** Usa la imagen fija `redis:alpine`, no una etiquetada con el commit, así que nunca genera una revisión nueva — hacerle `rollout undo` la mandaría a una revisión vieja arbitraria o fallaría por falta de historial.
+**`redis-cart` y `redis-orders` quedan afuera a propósito.** Usan la imagen fija `redis:alpine` y, desde #90, ya no generan una revisión nueva en cada despliegue. Hacerles `rollout undo` los mandaría a una revisión vieja: Kubernetes recrearía el pod y se perderían sus datos.
 
 Esto es el nivel 2 de rollback, automático. Para los otros dos niveles (apagar el feature con un kill switch, o volver a la revisión anterior a mano) ver el documento de estrategia de rollback del proyecto.
 
