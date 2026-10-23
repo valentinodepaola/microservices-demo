@@ -83,13 +83,13 @@ kubectl apply -k .
 
 Los carritos se vacían al comprar y los pedidos tienen que sobrevivir a eso. Compartir instancia también haría que un `FLUSHALL` de depuración de carritos se llevara los pedidos por delante.
 
-## ⚠️ Los pedidos no sobreviven al pod
+## Dónde viven los pedidos
 
-`redis-orders` usa `emptyDir`, igual que `redis-cart`. **Los pedidos viven mientras viva el pod:** si se elimina o se recrea, se pierden todos, y un número de rastreo que antes funcionaba empieza a responder `NotFound`.
+`redis-orders` guarda los pedidos en un disco propio, el `PersistentVolumeClaim` `redis-orders-data` de 1 Gi, igual que `redis-cart` con `redis-cart-data`. Hasta #90 era un `emptyDir`, y como cada despliegue recrea el pod, cualquier merge borraba todos los pedidos.
 
-Es aceptable porque la demostración ocurre dentro de una sola sesión, pero esto **no es almacenamiento duradero**. Pasar a un `PersistentVolumeClaim` o a un Redis gestionado es evolución posterior, fuera del alcance de la Fase 2.
+El disco sobrevive a los despliegues, a que el pod se caiga y a apagar el lab. **Solo se pierde si se destruye la instancia** o si alguien borra el PVC. Corre con `--appendonly yes`, así que un apagado brusco pierde a lo mucho un segundo de pedidos, y con estrategia `Recreate`, para que el Redis viejo y el nuevo nunca escriban a la vez en la misma carpeta. El detalle está en [`docs/despliegue-continuo.md`](../../../docs/despliegue-continuo.md#los-redis-guardan-sus-datos-en-un-disco).
 
-Las llaves tampoco tienen tiempo de expiración: un pedido registrado se puede consultar durante toda la vida del pod. El almacén crece mientras el pod viva, lo cual es acotado justamente porque el pod no es permanente.
+Las llaves no tienen tiempo de expiración, así que el almacén crece con cada pedido, y ahora los pedidos se acumulan entre despliegues. El 23/10/2026 cada pedido ocupaba unos 800 bytes en memoria (`MEMORY USAGE`), y el `loadgenerator` hace del orden de miles de compras por cada día de lab prendido: unos cuantos MB por día. **El primer límite que se alcanza no es el disco, es la memoria:** el contenedor tiene `limits.memory: 256Mi`, y si Redis la llena Kubernetes lo reinicia por OOM. Con ese ritmo faltan semanas de lab prendido, pero si alguna vez pasa, la salida es borrar los pedidos viejos o ponerles expiración.
 
 ## Comprobaciones
 

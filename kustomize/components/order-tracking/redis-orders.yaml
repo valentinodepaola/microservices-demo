@@ -19,6 +19,14 @@ metadata:
   labels:
     app: redis-orders
 spec:
+  # Recreate y no RollingUpdate: con el disco, el Redis viejo tiene que
+  # apagarse (y guardar) antes de que el nuevo lea la misma carpeta. Si no,
+  # conviven un momento y el viejo pisa lo que el nuevo ya escribió (#90).
+  # rollingUpdate: null borra lo que Kubernetes rellena solo; sin eso,
+  # kubectl apply rechaza el cambio de estrategia.
+  strategy:
+    type: Recreate
+    rollingUpdate: null
   selector:
     matchLabels:
       app: redis-orders
@@ -45,7 +53,10 @@ spec:
         # La contraseña sale del Secret redis-orders (#79), que no está en el
         # repo: lo crea el pipeline con lo que saca de Vault. Kubernetes
         # reemplaza $(REDIS_PASSWORD) con el valor de la variable, sin shell.
-        args: ["--requirepass", "$(REDIS_PASSWORD)"]
+        # appendonly: apunta cada escritura en el disco, no solo una foto de
+        # vez en cuando. Si el lab se apaga de golpe se pierde a lo mucho un
+        # segundo de pedidos (#90).
+        args: ["--requirepass", "$(REDIS_PASSWORD)", "--appendonly", "yes"]
         env:
         - name: REDIS_PASSWORD
           valueFrom:
@@ -74,7 +85,25 @@ spec:
             memory: 200Mi
       volumes:
       - name: redis-data
-        emptyDir: {}
+        # Antes era un emptyDir, que se borra con el pod, y cada despliegue
+        # recrea el pod (#90). El disco sobrevive a eso y a apagar el lab.
+        persistentVolumeClaim:
+          claimName: redis-orders-data
+---
+# Sin storageClassName usa la clase por omisión: local-path en k3s, que
+# guarda en el disco del nodo (/var/lib/rancher/k3s/storage), y hostpath en
+# Docker Desktop. Solo se pierde si se destruye la instancia.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-orders-data
+  labels:
+    app: redis-orders
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: Service

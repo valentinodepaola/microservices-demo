@@ -41,6 +41,8 @@ Los artículos viven **dentro** del pedido, no en registros aparte. Una escritur
 
 Si una fase posterior exige durabilidad, la evolución prevista es sustituir `emptyDir` por un volumen persistente o un almacén gestionado.
 
+> **Actualización (2026-10-23, #90):** se hizo la primera de esas dos evoluciones. Resultó que el pod no solo se recreaba si se caía: Skaffold lo recrea en cada despliegue, así que cualquier merge borraba los pedidos. `redis-orders` y `redis-cart` ahora usan un `PersistentVolumeClaim` con la clase `local-path` de k3s, con `--appendonly yes` y estrategia `Recreate`. El resto de esta decisión sigue igual. Ver [`docs/despliegue-continuo.md`](../despliegue-continuo.md#los-redis-guardan-sus-datos-en-un-disco).
+
 ## Referencias
 
 Propuesta de proyecto §2.3 y §2.3.1.
