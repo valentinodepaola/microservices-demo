@@ -410,10 +410,10 @@ jobs:
         #
         # rollout status y no `kubectl wait --for=condition=available`: este
         # ultimo solo pregunta si hay pods disponibles, y los viejos cuentan.
-        # Antes no se notaba porque el status-check de skaffold esperaba el
-        # rollout, pero desde la regla de skaffold.yaml (#90) ya no ve los
-        # Deployments. En el merge de #102 los catorce dijeron "condition met"
-        # en segundos y el smoke test corrio a media actualizacion.
+        # Casi nunca se nota, porque el status-check de skaffold ya espero el
+        # rollout. Pero en el merge de #102 una regla de skaffold.yaml lo dejo
+        # sin ver los Deployments, los catorce dijeron "condition met" en
+        # segundos y el smoke test corrio a media actualizacion.
         run: |
           set -euo pipefail
           for d in adservice cartservice checkoutservice currencyservice \
@@ -424,11 +424,10 @@ jobs:
           done
 
       - name: Contar los pedidos que ya habia en redis-orders
-        # Punto de partida del smoke test de redis-orders. Los pedidos no
-        # expiran y redis-orders ya no se recrea entre despliegues: su imagen
-        # es fija y la regla resourceSelector de skaffold.yaml evita que la
-        # etiqueta run-id le cambie la plantilla (#90). Asi que desde el
-        # segundo merge siempre hay pedidos viejos.
+        # Punto de partida del smoke test de redis-orders. Hoy redis-orders
+        # se recrea en cada despliegue y arranca vacio: skaffold le pone a la
+        # plantilla la etiqueta run-id con un valor nuevo (#90). Pero los
+        # pedidos no expiran, y si eso se arregla quedarian pedidos viejos.
         # El smoke test exige que el numero CREZCA, no solo que sea mayor a 0.
         #
         # redis-orders pide contrasena (#79). redis-cli se autentica DENTRO
@@ -527,10 +526,9 @@ jobs:
         if: failure() && steps.deploy.outcome != 'skipped'
         run: |
           # redis-cart y redis-orders quedan fuera a proposito: usan
-          # redis:alpine, imagen fija, y con la regla de skaffold.yaml ya no
-          # generan revision nueva en cada despliegue (#90). Un rollout undo
-          # los mandaria a una revision vieja, recrearia el pod y borraria
-          # sus datos.
+          # redis:alpine, imagen fija, y entre una revision y otra solo
+          # cambia la etiqueta run-id. Un rollout undo no les arregla nada y
+          # los recrearia, vaciandolos otra vez (#90).
           for d in adservice cartservice checkoutservice currencyservice \
                    emailservice frontend loadgenerator orderservice \
                    paymentservice productcatalogservice recommendationservice \
