@@ -104,7 +104,7 @@ Skaffold le pone a cada Deployment la etiqueta `skaffold.dev/run-id`, con un val
 
 La regla `resourceSelector` de `skaffold.yaml` le dice a Skaffold que no ponga etiquetas en los Deployments. Como la imagen de los Redis es fija, su plantilla ya no cambia y conservan los datos entre despliegues. El primer merge con la regla todavía los recrea una vez, porque la etiqueta desaparece de la plantilla.
 
-El costo es que el `status-check` de Skaffold busca los Deployments por esa etiqueta y ya no encuentra ninguno. Esperarlos queda a cargo del paso *Esperar a que los Deployments esten disponibles*, que ya los esperaba uno por uno.
+El costo es que el `status-check` de Skaffold busca los Deployments por esa etiqueta y ya no encuentra ninguno, así que `skaffold deploy` termina sin esperar a que los pods nuevos estén listos. Esa espera la hace ahora el paso *Esperar a que los Deployments esten disponibles*, con `kubectl rollout status`. Antes usaba `kubectl wait --for=condition=available`, que solo pregunta si hay pods disponibles, y los viejos cuentan. Con eso el CD del merge de #102 salió rojo: los catorce Deployments dijeron que estaban listos en segundos, el smoke test corrió a media actualización y el rollback regresó los servicios a la versión anterior.
 
 Esto no los vuelve almacenamiento duradero: si el pod se elimina por otra razón, los datos se pierden igual ([ADR 0004](adr/0004-redis-con-el-pedido-serializado-como-un-valor.md)).
 
