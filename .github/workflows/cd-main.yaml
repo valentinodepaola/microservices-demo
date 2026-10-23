@@ -468,16 +468,26 @@ jobs:
 
       - name: Smoke test - la tienda responde sin errores
         timeout-minutes: 10
+        # Locust imprime una tabla cada pocos segundos, cada una con su fila
+        # Aggregated. `kubectl logs -l` solo devuelve las ultimas 10 lineas, y
+        # al arrancar las tablas son cortas: en el merge de #104 cupieron dos
+        # y el conteo salio "8 13", que [ ] no sabe comparar. Por eso se pide
+        # el log completo y se toma solo la ultima fila.
+        #
+        # `|| true` en el ciclo: mientras el init container frontend-check
+        # corre, kubectl logs falla, y antes de la primera tabla grep no
+        # encuentra nada. Con pipefail cualquiera de los dos mataba el paso
+        # (paso en el merge de #102). Ahi solo toca esperar otra vuelta.
         run: |
           set -euo pipefail
           kubectl delete pod -l app=loadgenerator
           REQUEST_COUNT=0
           while [ "$REQUEST_COUNT" -lt 50 ]; do
             sleep 5
-            REQUEST_COUNT=$(kubectl logs -l app=loadgenerator | grep Aggregated | awk '{print $2}')
+            REQUEST_COUNT=$(kubectl logs -l app=loadgenerator --tail=-1 | grep Aggregated | tail -1 | awk '{print $2}' || true)
             REQUEST_COUNT=${REQUEST_COUNT:-0}
           done
-          ERROR_COUNT=$(kubectl logs -l app=loadgenerator | grep Aggregated | awk '{print $3}' | sed "s/[(][^)]*[)]//g")
+          ERROR_COUNT=$(kubectl logs -l app=loadgenerator --tail=-1 | grep Aggregated | tail -1 | awk '{print $3}' | sed "s/[(][^)]*[)]//g")
           echo "Peticiones: $REQUEST_COUNT · errores: $ERROR_COUNT"
           [ "$ERROR_COUNT" -eq 0 ]
 
