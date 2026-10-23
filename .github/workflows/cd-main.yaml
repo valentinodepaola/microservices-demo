@@ -217,7 +217,7 @@ jobs:
       # que abrir los logs.
       url: ${{ steps.tienda.outputs.url }}
     # Baja de 30 a 20: este job ya no construye imagenes, solo aplica. Lo que
-    # queda son los 600s del kubectl wait y los 10 min del smoke test.
+    # queda son los 600s del rollout status y los 10 min del smoke test.
     timeout-minutes: 20
     # Donde vive Vault. Sale de `terraform output vault_url`
     # (terraform/aws/outputs.tf). Va escrita aqui y no como variable de GitHub
@@ -328,7 +328,7 @@ jobs:
         # laboratorio de AWS Academy apaga las instancias al cerrar sesion.
         #
         # Sin este paso el job moriria diez minutos mas tarde, dentro del
-        # kubectl wait, con un error de conexion que no dice la causa. Con el,
+        # rollout status, con un error de conexion que no dice la causa. Con el,
         # muere en 20 segundos diciendo exactamente que pasa.
         run: |
           set -euo pipefail
@@ -407,13 +407,20 @@ jobs:
         # orderservice y redis-orders entran con el perfil order-tracking.
         # Hay que esperarlos aqui: si no, el smoke test de DBSIZE puede correr
         # antes de que Redis este listo y fallar por una carrera, no por un bug.
+        #
+        # rollout status y no `kubectl wait --for=condition=available`: este
+        # ultimo solo pregunta si hay pods disponibles, y los viejos cuentan.
+        # Antes no se notaba porque el status-check de skaffold esperaba el
+        # rollout, pero desde la regla de skaffold.yaml (#90) ya no ve los
+        # Deployments. En el merge de #102 los catorce dijeron "condition met"
+        # en segundos y el smoke test corrio a media actualizacion.
         run: |
           set -euo pipefail
           for d in adservice cartservice checkoutservice currencyservice \
                    emailservice frontend loadgenerator orderservice \
                    paymentservice productcatalogservice recommendationservice \
                    redis-cart redis-orders shippingservice; do
-            kubectl wait --for=condition=available --timeout=600s deployment/$d
+            kubectl rollout status deployment/$d --timeout=600s
           done
 
       - name: Contar los pedidos que ya habia en redis-orders

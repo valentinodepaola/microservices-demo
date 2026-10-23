@@ -21,8 +21,9 @@ metadata:
 # recrea el pod aunque nada haya cambiado, y redis-cart y redis-orders pierden
 # sus datos (#90). Skaffold ya hace lo mismo con los Jobs.
 # Efecto secundario: su status-check busca los Deployments por esa etiqueta y
-# ya no ve ninguno. Los espera el paso "Esperar a que los Deployments esten
-# disponibles" del CD.
+# ya no ve ninguno, asi que skaffold deploy ya no espera el rollout. Lo espera
+# el paso "Esperar a que los Deployments esten disponibles" del CD, con
+# kubectl rollout status.
 resourceSelector:
   deny:
     - groupKind: "Deployment.apps"
