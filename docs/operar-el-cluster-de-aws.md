@@ -52,7 +52,7 @@ Pero el clúster solo lo puedo encender yo, porque el lab de AWS Academy está e
 - El job `deploy` falla en unos segundos en el paso de Vault, con un mensaje que dice que no responde. Si el lab está prendido pero Vault sigue sellado, el mensaje dice eso.
 - No se rompe nada. El clúster no está encendido, así que no queda nada a medias.
 - Las imágenes sí se publican en `ghcr.io`, eso lo hace el job anterior.
-- Para arreglarlo, enciendo el lab, abro Vault y le doy **Re-run failed jobs** a esa ejecución. No hace falta un commit nuevo. Vault también lo puede abrir Alessia, que tiene un pedazo de la llave, pero hacen falta dos.
+- Para arreglarlo, enciendo el lab, abro Vault y le doy **Re-run failed jobs** a esa ejecución. No hace falta un commit nuevo. Si ya pasó más de un día, es **Re-run all jobs**: la lista de imágenes que construyó el job anterior solo dura un día, y sin ella `deploy` no tiene qué desplegar. Vault también lo puede abrir Alessia, que tiene un pedazo de la llave, pero hacen falta dos.
 
 O sea: el despliegue es automático, pero que el clúster esté encendido depende de mí.
 
@@ -297,6 +297,7 @@ El `curl` tiene que regresar `HTTP/1.1 200 OK`. La IP la saco del kubeconfig y n
 | El job falla en `Comprobar que Vault responde` | Vault está sellado o su máquina está detenida. Ve [cuando el despliegue falla en Vault](#cuando-el-despliegue-falla-en-vault) |
 | El job falla en `Leer los secretos de Vault` | Venció `VAULT_TOKEN` o cambió la política. Ve [cuando el despliegue falla en Vault](#cuando-el-despliegue-falla-en-vault) |
 | El job falla en `Comprobar que el cluster responde` | La instancia está detenida. Enciéndela y dale **Re-run failed jobs** |
+| El job falla en `Bajar el indice de lo construido` con `Artifact not found for name: build-artifacts` | Pasó más de un día desde que corrió la ejecución. `build.json` se guarda solo un día (`retention-days: 1` en `cd-main.yaml`, para no llenar la cuota), así que *Re-run failed jobs* ya no lo encuentra. Dale **Re-run all jobs**: vuelve a construir y lo sube otra vez. Me pasó el 27/10/2026 |
 | Error de TLS al conectar | El kubeconfig en Vault es de una instancia anterior. [Recárgalo](#si-la-instancia-no-existe) |
 | Un pod en `Pending` con `Insufficient cpu` | El límite de 2 vCPU del lab. Ve [despliegue-continuo.md](despliegue-continuo.md#qué-revisar-primero-cuando-falla) |
 | `emailservice` o `recommendationservice` con 1 reinicio | Es normal cuando arrancan los doce al mismo tiempo. Se arregla solo |
