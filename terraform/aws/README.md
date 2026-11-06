@@ -31,6 +31,16 @@ Y para Vault, en `vault.tf`:
 | 2 reglas de firewall | Entrada `8200` (API e interfaz web de Vault); salida sin restricción. Sin 22 y sin 80 |
 | `aws_s3_bucket_public_access_block` y `aws_s3_bucket_lifecycle_configuration` | Bloquean el acceso público al bucket de Ansible y borran lo que quede en él después de un día. El bucket en sí se crea a mano (ver abajo) |
 
+Y para los logs de la tienda, en `logs.tf` (#111):
+
+| Recurso | Para qué |
+|---|---|
+| `aws_cloudwatch_log_group` | `/boutique/tienda`, donde Fluent Bit manda los logs de los pods. Guarda 7 días; sin retención CloudWatch los guardaría para siempre |
+
+El grupo lo crea Terraform y no Fluent Bit, aunque el permiso del lab sí le dejaría crearlo (lo comprobé desde un pod). Si lo creara Fluent Bit quedaría fuera del código y `terraform plan` no lo vería. Fluent Bit vive en [`kustomize/components/cloudwatch-logs/`](../../kustomize/components/cloudwatch-logs/) y entra con el despliegue.
+
+Fluent Bit no tiene llaves: saca las credenciales de `LabInstanceProfile` del servicio de metadatos del nodo. Por eso el nodo lleva `metadata_options` con `http_put_response_hop_limit = 2`. El tráfico de un pod pasa por la red de k3s y llega con un salto de más; con el límite en 1 el pod se queda sin credenciales. El 2 ya venía de la imagen de Ubuntu, pero ahora está en el código y el `plan` lo vigila.
+
 La AMI no está fijada por identificador: se resuelve con un `data source` filtrando por Canonical y por `amd64`, porque el identificador cambia según la región y con cada publicación de imagen. Por eso las dos instancias tienen `ignore_changes = [ami]`: sin eso, cada imagen nueva de Canonical haría que el `plan` quisiera destruirlas y crearlas otra vez.
 
 ## Requisitos
@@ -152,6 +162,7 @@ El presupuesto del laboratorio es de **50 USD**, y agotarlo **desactiva la cuent
 | Instancia `t3.small` de Vault | Solo encendida | ~0.02 USD/hora |
 | Disco de 10 GB de Vault | Siempre, aunque esté detenida | ~0.80 USD/mes |
 | IP elástica de Vault | Siempre, mientras esté reservada | ~3.60 USD/mes |
+| Logs en CloudWatch | Por GB que llega, y lo que se guarda los 7 días | ~0.50 USD/GB |
 
 > **El laboratorio enciende solas las dos instancias** al iniciar cada sesión, aunque se hayan detenido antes. Conviene revisar al abrir:
 >

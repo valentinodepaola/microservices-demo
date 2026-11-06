@@ -29,6 +29,16 @@ resource "aws_instance" "k3s" {
     volume_type = "gp3"
   }
 
+  # Fluent Bit corre en un pod y saca sus credenciales del servicio de metadatos.
+  # Su trafico pasa por la red de k3s y llega con un salto de mas, asi que con
+  # el limite en 1 se quedaria sin credenciales. Hoy el 2 viene de la imagen de
+  # Ubuntu; aqui se fija para no depender de ese valor por defecto.
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
+
   tags = {
     Name = "${var.project}-k3s"
   }

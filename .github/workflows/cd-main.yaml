@@ -401,7 +401,12 @@ jobs:
         # checkoutservice. Sin el perfil, el CD seguiria saliendo en verde
         # con la tienda de siempre y el seguimiento nunca llegaria al
         # servidor. Para apagarlo en el CD basta quitar el -p.
-        run: skaffold deploy -p order-tracking --build-artifacts=build.json
+        #
+        # -p cloudwatch-logs suma Fluent Bit, que manda los logs de la tienda
+        # al Log Group /boutique/tienda (#111). Va aqui y no en el despliegue
+        # por defecto porque solo funciona en la EC2: saca sus credenciales del
+        # servicio de metadatos del nodo.
+        run: skaffold deploy -p order-tracking,cloudwatch-logs --build-artifacts=build.json
 
       - name: Esperar a que los Deployments esten disponibles
         # orderservice y redis-orders entran con el perfil order-tracking.
@@ -422,6 +427,10 @@ jobs:
                    redis-cart redis-orders shippingservice; do
             kubectl rollout status deployment/$d --timeout=600s
           done
+          # Fluent Bit es un DaemonSet y vive en su propio namespace (#111).
+          # Si no queda arriba, los logs dejan de llegar a CloudWatch sin que
+          # la tienda se entere.
+          kubectl -n logging rollout status daemonset/fluent-bit --timeout=300s
 
       - name: Contar los pedidos que ya habia en redis-orders
         # Punto de partida del smoke test de redis-orders. Los pedidos no

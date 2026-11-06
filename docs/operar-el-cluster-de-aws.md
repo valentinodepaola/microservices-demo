@@ -286,6 +286,25 @@ curl -I http://$(kubectl config view --minify \
 
 El `curl` tiene que regresar `HTTP/1.1 200 OK`. La IP la saco del kubeconfig y no de `kubectl get svc`, porque ese regresa la IP privada del nodo. La instancia no sabe que tiene una IP elástica, esa traducción la hace AWS por fuera.
 
+### Ver los logs en CloudWatch
+
+Los logs de la tienda llegan a CloudWatch desde #111. En la consola: **CloudWatch → Logs → Log groups → `/boutique/tienda`**. Ahí hay un stream por pod y contenedor, por ejemplo `frontend-9c8cbb75f-s7qkn.server`. Para verlos llegar en tiempo real, **Start tailing** (Live Tail) con el `loadgenerator` corriendo.
+
+Desde la terminal, con las llaves del lab:
+
+```bash
+aws logs tail /boutique/tienda --follow --region us-east-1
+```
+
+Si no llega nada, revisa a Fluent Bit:
+
+```bash
+kubectl -n logging get pods
+kubectl -n logging logs ds/fluent-bit --tail=30
+```
+
+`AccessDeniedException` en esos logs quiere decir que cambió el permiso de `LabInstanceProfile`. `ResourceNotFoundException` quiere decir que el Log Group no existe: alguien lo borró a mano y Fluent Bit no lo vuelve a crear a propósito. Lo regresa un `terraform apply`.
+
 ### Síntomas y qué significan
 
 | Qué ves | Qué pasa |

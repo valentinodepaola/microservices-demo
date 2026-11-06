@@ -98,6 +98,16 @@ Con el perfil vienen tres cambios más en el workflow:
 
 Para desplegar sin seguimiento basta con quitar `-p order-tracking` del paso *Desplegar* (y el segundo smoke test, que fallaría siempre).
 
+## Los logs en CloudWatch
+
+Desde #111 el paso *Desplegar* corre con dos perfiles: `-p order-tracking,cloudwatch-logs`. El segundo suma [`kustomize/components/cloudwatch-logs/`](../kustomize/components/cloudwatch-logs/): Fluent Bit como DaemonSet en el namespace `logging`, que lee los logs de los pods del namespace `default` y los manda al Log Group `/boutique/tienda`. El grupo lo crea Terraform ([`terraform/aws/logs.tf`](../terraform/aws/logs.tf)).
+
+El paso *Esperar a que los Deployments esten disponibles* también espera al DaemonSet. Fluent Bit no está en el *Rollback automatico*: su imagen es fija, igual que la de los Redis, así que un `rollout undo` no le arreglaría nada.
+
+Skaffold recrea el pod de Fluent Bit en cada despliegue, por la misma etiqueta `run-id` de la sección siguiente. No se pierden ni se repiten logs, porque Fluent Bit guarda hasta dónde leyó cada archivo en el disco del nodo (`/var/fluent-bit/state`), y el pod nuevo sigue desde ahí. Cada pod de la tienda que nace en un despliegue estrena su propio stream.
+
+Fluent Bit pide 50m de CPU. Con eso el nodo queda en unos 1540m reservados, y el margen sigue siendo mayor que los 100m del servicio más grande.
+
 ## Los Redis guardan sus datos en un disco
 
 Skaffold le pone a cada Deployment la etiqueta `skaffold.dev/run-id`, con un valor nuevo en cada despliegue, también en la plantilla del pod. Para Kubernetes eso ya es un cambio, así que recrea todos los pods aunque nada más haya cambiado. A los servicios les da igual, porque su imagen cambia en cada merge de todos modos. Pero hasta #90 `redis-cart` y `redis-orders` guardaban sus datos en un `emptyDir`, que se borra con el pod, así que cualquier merge, aunque solo tocara un README, vaciaba los carritos y los pedidos.

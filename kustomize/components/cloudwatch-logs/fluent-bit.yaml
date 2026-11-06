@@ -1,0 +1,181 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Fluent Bit lee los logs de los pods de la tienda en el nodo y los manda al
+# Log Group /boutique/tienda de CloudWatch (#111). El Log Group lo crea
+# Terraform (terraform/aws/logs.tf), no Fluent Bit.
+#
+# Va en su propio namespace para que sus logs no se mezclen con los de la
+# tienda: solo lee los archivos del namespace default.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: logging
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: logging
+---
+# El filtro kubernetes le pregunta a la API por cada pod para ponerle a cada
+# evento su nombre, su namespace y su contenedor. Solo necesita leer.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluent-bit
+rules:
+- apiGroups: [""]
+  resources: ["pods", "namespaces"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluent-bit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit
+subjects:
+- kind: ServiceAccount
+  name: fluent-bit
+  namespace: logging
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit
+  namespace: logging
+data:
+  # Tres pasos: tail lee los archivos, kubernetes les pone el nombre del pod
+  # y cloudwatch_logs los manda.
+  #
+  # tail:
+  # - Solo *_default_*: los archivos se llaman <pod>_<namespace>_<contenedor>,
+  #   asi que esto deja fuera a kube-system y al propio Fluent Bit.
+  # - multiline.parser cri: k3s usa containerd, que escribe cada linea con su
+  #   fecha y su stream delante. El parser los separa del mensaje.
+  # - db: donde se quedo leyendo cada archivo. Vive en el disco del nodo
+  #   (hostPath), porque Skaffold recrea el pod en cada despliegue y sin esto
+  #   el pod nuevo no sabria por donde iba.
+  #
+  # cloudwatch_logs:
+  # - auto_create_group false: el permiso del lab si le deja crear grupos, asi
+  #   que esto es lo unico que impide que aparezcan grupos fuera de Terraform.
+  # - Un stream por pod y contenedor. Si el template falla, el stream se
+  #   llama con el prefijo y el tag del archivo.
+  # - Sin llaves: las credenciales salen del servicio de metadatos del nodo
+  #   (LabInstanceProfile). Por eso compute.tf fija el limite de saltos en 2.
+  fluent-bit.yaml: |
+    service:
+      flush: 5
+      log_level: info
+      http_server: on
+      http_listen: 0.0.0.0
+      http_port: 2020
+      health_check: on
+
+    pipeline:
+      inputs:
+        - name: tail
+          tag: kube.*
+          path: /var/log/containers/*_default_*.log
+          multiline.parser: cri
+          db: /var/fluent-bit/state/tail.db
+          mem_buf_limit: 5MB
+          skip_long_lines: on
+          refresh_interval: 10
+
+      filters:
+        - name: kubernetes
+          match: kube.*
+          merge_log: on
+          keep_log: off
+          labels: off
+          annotations: off
+
+      outputs:
+        - name: cloudwatch_logs
+          match: kube.*
+          region: us-east-1
+          log_group_name: /boutique/tienda
+          log_stream_prefix: sin-pod-
+          log_stream_template: $kubernetes['pod_name'].$kubernetes['container_name']
+          auto_create_group: false
+---
+# DaemonSet y no Deployment: un pod por nodo, porque cada uno lee los archivos
+# del nodo donde corre. Hoy hay un solo nodo, asi que es un solo pod.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: logging
+  labels:
+    app: fluent-bit
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+    spec:
+      serviceAccountName: fluent-bit
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit:5.1.5
+        args: ["-c", "/fluent-bit/config/fluent-bit.yaml"]
+        ports:
+        - name: http
+          containerPort: 2020
+        # El nodo anda justo de CPU (docs/despliegue-continuo.md). Con la
+        # tienda y el loadgenerator, Fluent Bit casi no hace nada.
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        livenessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        volumeMounts:
+        - name: config
+          mountPath: /fluent-bit/config
+          readOnly: true
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+        - name: state
+          mountPath: /var/fluent-bit/state
+      volumes:
+      - name: config
+        configMap:
+          name: fluent-bit
+      # /var/log/containers son enlaces a /var/log/pods, asi que montar
+      # /var/log alcanza para los dos.
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: state
+        hostPath:
+          path: /var/fluent-bit/state
+          type: DirectoryOrCreate
