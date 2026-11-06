@@ -120,6 +120,16 @@ profiles:
   - op: replace
     path: /manifests/kustomize/paths/0
     value: kustomize/overlays/order-tracking
+# La tienda como se despliega en AWS: order-tracking más https (#68), con
+# Traefik, Let's Encrypt y sin frontend-external. Cambia la ruta, igual que
+# order-tracking, porque también parcha Deployments. No se combina con
+# order-tracking: ya lo incluye.
+#     skaffold run -p aws,cloudwatch-logs
+- name: aws
+  patches:
+  - op: replace
+    path: /manifests/kustomize/paths/0
+    value: kustomize/overlays/aws
 - name: local-arm64
   activation:
   - kubeContext: docker-desktop

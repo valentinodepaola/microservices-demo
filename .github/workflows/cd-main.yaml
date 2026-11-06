@@ -400,13 +400,18 @@ jobs:
         # agrega orderservice y redis-orders y parcha frontend y
         # checkoutservice. Sin el perfil, el CD seguiria saliendo en verde
         # con la tienda de siempre y el seguimiento nunca llegaria al
-        # servidor. Para apagarlo en el CD basta quitar el -p.
+        # servidor.
+        #
+        # Desde #68 el perfil es aws, que renderiza kustomize/overlays/aws/:
+        # lo mismo que order-tracking, mas Traefik con Let's Encrypt, el
+        # Ingress de la tienda y sin frontend-external. Para apagar el
+        # seguimiento de pedidos hay que quitar su componente de ese overlay.
         #
         # -p cloudwatch-logs suma Fluent Bit, que manda los logs de la tienda
         # al Log Group /boutique/tienda (#111). Va aqui y no en el despliegue
         # por defecto porque solo funciona en la EC2: saca sus credenciales del
         # servicio de metadatos del nodo.
-        run: skaffold deploy -p order-tracking,cloudwatch-logs --build-artifacts=build.json
+        run: skaffold deploy -p aws,cloudwatch-logs --build-artifacts=build.json
 
       - name: Esperar a que los Deployments esten disponibles
         # orderservice y redis-orders entran con el perfil order-tracking.
@@ -431,6 +436,15 @@ jobs:
           # Si no queda arriba, los logs dejan de llegar a CloudWatch sin que
           # la tienda se entere.
           kubectl -n logging rollout status daemonset/fluent-bit --timeout=300s
+          # Traefik no lo aplica skaffold directo: skaffold aplica un HelmChart
+          # y el helm-controller de k3s instala el chart despues, con un Job
+          # (#68). La primera vez el Deployment tarda en existir, asi que se
+          # espera a que aparezca antes de pedirle el rollout status.
+          for i in $(seq 1 60); do
+            kubectl -n traefik get deployment/traefik >/dev/null 2>&1 && break
+            sleep 5
+          done
+          kubectl -n traefik rollout status deployment/traefik --timeout=300s
 
       - name: Contar los pedidos que ya habia en redis-orders
         # Punto de partida del smoke test de redis-orders. Los pedidos no
@@ -466,14 +480,20 @@ jobs:
         # funciono, esta direccion es correcta por construccion.
         #
         # El puerto va sin :6443 a proposito: ese es el del API de Kubernetes.
-        # La tienda la publica el ServiceLB en el 80 del nodo.
+        # La tienda la publica Traefik en el 443 del nodo (#68).
+        #
+        # Desde #68 la URL es un nombre de sslip.io (3-94-38-103.sslip.io),
+        # porque el certificado de Let's Encrypt es para el nombre y no para
+        # la IP. Tiene que coincidir con el host de
+        # kustomize/components/https/ingress.yaml.
         run: |
           set -euo pipefail
           SERVIDOR=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
           HOST=${SERVIDOR#https://}
           HOST=${HOST%%:*}
-          echo "Tienda: http://${HOST}"
-          echo "url=http://${HOST}" >> "$GITHUB_OUTPUT"
+          NOMBRE="${HOST//./-}.sslip.io"
+          echo "Tienda: https://${NOMBRE}"
+          echo "url=https://${NOMBRE}" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test - la tienda responde sin errores
         timeout-minutes: 10
@@ -526,6 +546,29 @@ jobs:
             echo "::error::No llego ningun pedido nuevo a redis-orders con el trafico del loadgenerator. Revisar 'kubectl logs deploy/checkoutservice' y 'kubectl logs deploy/orderservice'."
             exit 1
           fi
+
+      - name: Smoke test - la tienda responde por https
+        # Los dos smoke tests de arriba entran por dentro del cluster
+        # (loadgenerator -> frontend:80), asi que no se enteran si Traefik o
+        # el certificado fallan (#68). Este entra por fuera, como un
+        # navegador, y curl revisa el certificado: si es de staging o vencio,
+        # falla.
+        #
+        # Se le dan hasta 2 minutos por si Traefik se esta reiniciando o, la
+        # primera vez, todavia le esta pidiendo el certificado a Let's Encrypt.
+        timeout-minutes: 3
+        env:
+          URL: ${{ steps.tienda.outputs.url }}
+        run: |
+          for i in $(seq 1 24); do
+            if curl -sS -o /dev/null --max-time 10 "$URL/"; then
+              echo "La tienda responde en $URL con un certificado valido."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::La tienda no responde por https en $URL. Revisar 'kubectl -n traefik logs deploy/traefik' (el certificado) y 'kubectl get ingress frontend'."
+          exit 1
 
       - name: Rollback automatico
         id: rollback

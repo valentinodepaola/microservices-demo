@@ -1,0 +1,45 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# La entrada a la tienda por https (#68). Traefik lo lee, pide el certificado
+# para el host con el resolver de la anotacion y le manda el trafico al
+# Service interno frontend. El frontend sigue hablando http dentro del
+# cluster: el cifrado se hace aqui.
+#
+# El host sale de sslip.io, que convierte la IP en un nombre: resuelve
+# 3-94-38-103.sslip.io a 3.94.38.103. Let's Encrypt no emite para una IP
+# sola, necesita un nombre. Si se consigue un dominio propio, solo cambia el
+# host.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # letsencrypt-staging para probar sin gastar el limite (ver traefik.yaml).
+    traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: 3-94-38-103.sslip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80

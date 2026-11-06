@@ -1,0 +1,92 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Traefik recibe el trafico de la tienda en el 80 y el 443, pide el
+# certificado a Let's Encrypt y lo renueva solo (#68).
+#
+# No se instala con helm desde el pipeline: k3s trae un helm-controller que
+# instala el chart cuando ve este HelmChart. Asi Traefik entra con el resto
+# del despliegue, en un solo kubectl apply, y no hay que tocar user_data.sh
+# (que recrearia la instancia).
+#
+# Se llama traefik-tienda y no traefik para no chocar con el Traefik que trae
+# k3s, que esta apagado con --disable=traefik. fullnameOverride deja los
+# recursos y el IngressClass con el nombre corto.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: traefik-tienda
+  namespace: kube-system
+spec:
+  repo: https://traefik.github.io/charts
+  chart: traefik
+  version: 42.2.0
+  targetNamespace: traefik
+  createNamespace: true
+  valuesContent: |-
+    fullnameOverride: traefik
+
+    # Todo lo que llega por http se manda a https. El reto HTTP-01 de
+    # Let's Encrypt tambien llega por el 80, pero Traefik lo atiende antes
+    # de redirigir.
+    ports:
+      web:
+        http:
+          redirections:
+            entryPoint:
+              to: websecure
+              scheme: https
+              permanent: true
+
+    # Dos resolvers: staging para probar sin gastar el limite de Let's
+    # Encrypt (sus certificados no sirven en el navegador) y produccion. El
+    # Ingress elige cual usar. Cada uno guarda en su archivo, porque una
+    # cuenta de staging no sirve contra produccion.
+    certificatesResolvers:
+      letsencrypt:
+        acme:
+          caServer: https://acme-v02.api.letsencrypt.org/directory
+          storage: /data/acme.json
+          httpChallenge:
+            entryPoint: web
+      letsencrypt-staging:
+        acme:
+          caServer: https://acme-staging-v02.api.letsencrypt.org/directory
+          storage: /data/acme-staging.json
+          httpChallenge:
+            entryPoint: web
+
+    # El certificado vive en un disco, como los Redis (#106). Sin esto se
+    # perderia en cada reinicio del pod y Traefik pediria otro, gastando el
+    # limite de Let's Encrypt.
+    persistence:
+      enabled: true
+      size: 128Mi
+
+    # Nunca dos pods a la vez, igual que los Redis (#106). Cada Traefik
+    # guarda en memoria el reto de Let's Encrypt que esta resolviendo; con
+    # un rolling update el ServiceLB le mando la verificacion al pod viejo,
+    # que no lo conocia, y Let's Encrypt recibio un 404. Ademas los dos
+    # escribirian el mismo acme.json.
+    updateStrategy:
+      type: Recreate
+
+    # El nodo anda justo de CPU (docs/despliegue-continuo.md).
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 300m
+        memory: 256Mi

@@ -1,0 +1,39 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# La tienda por https con Let's Encrypt (#68). Solo sirve en el clúster de
+# AWS: necesita el helm-controller de k3s, el puerto 80 del nodo libre (ver
+# non-public-frontend en el overlay aws) y un nombre que apunte a la IP.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+- traefik.yaml
+- ingress.yaml
+patches:
+# El banner de la izquierda dice en qué nube corre la tienda. Sin esto dice
+# "local". Va aquí y no en kubernetes-manifests/ para que en Docker Desktop
+# siga diciendo "local".
+- patch: |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: frontend
+    spec:
+      template:
+        spec:
+          containers:
+          - name: server
+            env:
+            - name: ENV_PLATFORM
+              value: "aws"

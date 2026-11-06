@@ -1,0 +1,33 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Lo que renderiza el perfil `aws` de skaffold.yaml: la tienda como se
+# despliega en el clúster de AWS.
+#
+# Es el overlay order-tracking más el https (#68). Los tres componentes van
+# en la misma pasada de kustomize porque los tres parchan Deployments o
+# Services de kubernetes-manifests/ (ver el comentario del overlay
+# order-tracking):
+# - order-tracking: orderservice, redis-orders y sus parches (#28).
+# - non-public-frontend: quita frontend-external, que ocupaba el puerto 80
+#   del nodo. Ahora el 80 y el 443 son de Traefik.
+# - https: Traefik, el Ingress y el banner de AWS.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../../../kubernetes-manifests
+components:
+- ../../components/order-tracking
+- ../../components/non-public-frontend
+- ../../components/https
