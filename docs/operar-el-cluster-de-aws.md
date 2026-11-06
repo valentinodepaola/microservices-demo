@@ -240,7 +240,7 @@ Aquí hay un problema: para preguntarle a AWS tienes que abrir el lab, y al abri
 Por eso es mejor preguntarle directo a la máquina con `curl`, usando la IP elástica. No necesitas llaves y no enciendes nada:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 http://3.94.38.103/
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 https://3-94-38-103.sslip.io/
 ```
 
 | Si responde | Quiere decir |
@@ -251,7 +251,9 @@ curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 http://3.94.38.103/
 
 `000` no es un código de HTTP. Es `curl` diciendo que nadie contestó. Si la máquina estuviera encendida contestaría algo, aunque fuera un error.
 
-Si la IP elástica cambió (solo pasa si destruiste la infraestructura), la nueva la sacas con `terraform output public_ip`.
+Desde #68 la tienda se abre por `https://` con un nombre de sslip.io, que es la IP con guiones. Si le preguntas a `http://3.94.38.103/` te va a contestar `308`, que es Traefik mandándote a `https://`: también quiere decir que está encendida.
+
+Si la IP elástica cambió (solo pasa si destruiste la infraestructura), la nueva la sacas con `terraform output public_ip`, y la URL completa con `terraform output tienda_url`. En ese caso también hay que cambiar el host de `kustomize/components/https/ingress.yaml`.
 
 ### Revisarlo con AWS, si el lab ya está abierto
 
@@ -280,11 +282,25 @@ export KUBECONFIG=~/.kube/boutique-k3s.yaml
 
 kubectl get nodes                    # un nodo Ready
 kubectl get pods                     # doce Running
-curl -I http://$(kubectl config view --minify \
-  -o jsonpath='{.clusters[0].cluster.server}' | sed 's|https://||; s|:.*||')
+kubectl -n traefik get pods          # traefik Running
+curl -I https://$(kubectl config view --minify \
+  -o jsonpath='{.clusters[0].cluster.server}' | sed 's|https://||; s|:.*||; s|\.|-|g').sslip.io
 ```
 
-El `curl` tiene que regresar `HTTP/1.1 200 OK`. La IP la saco del kubeconfig y no de `kubectl get svc`, porque ese regresa la IP privada del nodo. La instancia no sabe que tiene una IP elástica, esa traducción la hace AWS por fuera.
+El `curl` tiene que regresar `HTTP/2 200`. La IP la saco del kubeconfig y no de `kubectl get svc`, porque ese regresa la IP privada del nodo. La instancia no sabe que tiene una IP elástica, esa traducción la hace AWS por fuera. Si `curl` se queja del certificado, ve [la tienda no abre por https](#la-tienda-no-abre-por-https).
+
+### La tienda no abre por https
+
+Traefik le pide el certificado a Let's Encrypt la primera vez que alguien entra, y lo guarda en un disco. Si no abre o el navegador marca el certificado como inválido:
+
+```bash
+kubectl -n traefik logs deploy/traefik --tail=50 | grep -i -E "acme|certificate|error"
+kubectl get ingress frontend
+```
+
+- **`too many certificates already issued` o `rateLimited`**: se acabó el límite semanal de Let's Encrypt para sslip.io, que se comparte con todo el mundo. Hay que esperar o usar un dominio propio (#68).
+- **El certificado dice "(STAGING)"**: el Ingress está usando el resolver `letsencrypt-staging`. Va `letsencrypt` en la anotación de `kustomize/components/https/ingress.yaml`.
+- **`connection refused` en el 443**: falta la regla del 443 en el Security Group (`terraform apply`) o Traefik no está corriendo.
 
 ### Ver los logs en CloudWatch
 
@@ -359,7 +375,7 @@ Para saber cuál de las dos últimas es, este comando muestra las peticiones rec
 aws sts get-caller-identity
 
 # ¿Está encendida? Sin llaves y sin encenderla (200 = sí, 000 = no)
-curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 http://3.94.38.103/
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 10 https://3-94-38-103.sslip.io/
 
 # ¿Cómo está la instancia? (necesita el lab abierto)
 aws ec2 describe-instances --filters "Name=tag:Name,Values=boutique-k3s" \

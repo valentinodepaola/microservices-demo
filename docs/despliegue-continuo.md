@@ -88,7 +88,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $T" \
 
 ## El seguimiento de pedidos en el CD
 
-El paso *Desplegar* corre `skaffold deploy -p order-tracking`. El perfil cambia `kubernetes-manifests/` por `kustomize/overlays/order-tracking/`, que agrega `orderservice` y `redis-orders` y parcha `frontend` y `checkoutservice` con `ENABLE_ORDER_TRACKING=true` ([ADR 0007](adr/0007-componente-opcional-con-kill-switch.md), #28). Las duraciones de cada etapa salen en modo demo: el ciclo completo dura 5 minutos.
+El seguimiento entró con el perfil `order-tracking`, que cambia `kubernetes-manifests/` por `kustomize/overlays/order-tracking/`, que agrega `orderservice` y `redis-orders` y parcha `frontend` y `checkoutservice` con `ENABLE_ORDER_TRACKING=true` ([ADR 0007](adr/0007-componente-opcional-con-kill-switch.md), #28). Las duraciones de cada etapa salen en modo demo: el ciclo completo dura 5 minutos.
 
 Con el perfil vienen tres cambios más en el workflow:
 
@@ -96,17 +96,32 @@ Con el perfil vienen tres cambios más en el workflow:
 - `orderservice` está en la lista del *Rollback automatico*. `redis-orders` no, por la misma razón que `redis-cart`, que está explicada en el rollback.
 - Un segundo smoke test, *los pedidos llegan a redis-orders*, revisa con `redis-cli DBSIZE` que después del tráfico del `loadgenerator` haya pedidos **nuevos**. Eso comprueba el camino checkout → `orderservice` → Redis. No basta con que haya al menos uno: los pedidos no expiran y `redis-orders` los guarda en un disco que sobrevive a los despliegues (ver [Los Redis guardan sus datos en un disco](#los-redis-guardan-sus-datos-en-un-disco)), así que desde el segundo merge siempre quedan pedidos viejos. Por eso el paso *Contar los pedidos que ya habia en redis-orders* guarda el número justo después de la espera, y el smoke test exige que crezca. Desde #79 `redis-orders` pide contraseña: los dos pasos corren `redis-cli` dentro del pod con `REDISCLI_AUTH`, tomada de la variable `REDIS_PASSWORD` del contenedor, así que la contraseña nunca llega al runner. Si la autenticación falla, `NOAUTH` no trae dígitos y el conteo da 0, y el smoke test falla diciendo que no llegaron pedidos: lo primero es revisar el Secret `redis-orders`.
 
-Para desplegar sin seguimiento basta con quitar `-p order-tracking` del paso *Desplegar* (y el segundo smoke test, que fallaría siempre).
+Desde #68 el CD usa el perfil `aws` en su lugar, que incluye el mismo componente (ver [La tienda por https](#la-tienda-por-https)). Para desplegar sin seguimiento hay que quitar `components/order-tracking` de `kustomize/overlays/aws/` (y el segundo smoke test, que fallaría siempre).
 
 ## Los logs en CloudWatch
 
-Desde #111 el paso *Desplegar* corre con dos perfiles: `-p order-tracking,cloudwatch-logs`. El segundo suma [`kustomize/components/cloudwatch-logs/`](../kustomize/components/cloudwatch-logs/): Fluent Bit como DaemonSet en el namespace `logging`, que lee los logs de los pods del namespace `default` y los manda al Log Group `/boutique/tienda`. El grupo lo crea Terraform ([`terraform/aws/logs.tf`](../terraform/aws/logs.tf)).
+Desde #111 el paso *Desplegar* suma el perfil `cloudwatch-logs` (hoy corre `-p aws,cloudwatch-logs`). El segundo suma [`kustomize/components/cloudwatch-logs/`](../kustomize/components/cloudwatch-logs/): Fluent Bit como DaemonSet en el namespace `logging`, que lee los logs de los pods del namespace `default` y los manda al Log Group `/boutique/tienda`. El grupo lo crea Terraform ([`terraform/aws/logs.tf`](../terraform/aws/logs.tf)).
 
 El paso *Esperar a que los Deployments esten disponibles* también espera al DaemonSet. Fluent Bit no está en el *Rollback automatico*: su imagen es fija, igual que la de los Redis, así que un `rollout undo` no le arreglaría nada.
 
 Skaffold recrea el pod de Fluent Bit en cada despliegue, por la misma etiqueta `run-id` de la sección siguiente. No se pierden ni se repiten logs, porque Fluent Bit guarda hasta dónde leyó cada archivo en el disco del nodo (`/var/fluent-bit/state`), y el pod nuevo sigue desde ahí. Cada pod de la tienda que nace en un despliegue estrena su propio stream.
 
 Fluent Bit pide 50m de CPU. Con eso el nodo queda en unos 1540m reservados, y el margen sigue siendo mayor que los 100m del servicio más grande.
+
+## La tienda por https
+
+Desde #68 el paso *Desplegar* corre con `-p aws,cloudwatch-logs`. El perfil `aws` renderiza [`kustomize/overlays/aws/`](../kustomize/overlays/aws/), que es lo mismo que `order-tracking` más dos componentes:
+
+- `non-public-frontend` quita `frontend-external`, que ocupaba el puerto 80 del nodo.
+- [`https`](../kustomize/components/https/) agrega Traefik, el Ingress de la tienda y `ENV_PLATFORM=aws` para el banner.
+
+Traefik no lo aplica Skaffold directo. Skaffold aplica un `HelmChart`, y el helm-controller que trae k3s instala el chart con un Job. Por eso el paso *Esperar a que los Deployments esten disponibles* primero espera a que exista el Deployment `traefik` y después le pide el `rollout status`.
+
+Traefik recibe el 80 y el 443, redirige http a https y le pide el certificado a Let's Encrypt la primera vez que alguien entra. El certificado se guarda en un disco, como los Redis, así que no se pide otro en cada despliegue. La tienda queda en `https://3-94-38-103.sslip.io`: sslip.io convierte la IP en un nombre, porque Let's Encrypt no emite para una IP sola.
+
+Los dos smoke tests de arriba entran por dentro del clúster y no pasan por Traefik. Por eso hay un tercero, *la tienda responde por https*, que hace `curl` a la URL pública desde el runner. `curl` revisa el certificado, así que si es de staging o venció, falla.
+
+`frontend-external` no se borra solo: Skaffold aplica lo que hay en los manifiestos pero no borra lo que ya no está. Lo borré a mano una vez (`kubectl delete svc frontend-external`). En una instancia nueva no hace falta, porque nunca se crea.
 
 ## Los Redis guardan sus datos en un disco
 

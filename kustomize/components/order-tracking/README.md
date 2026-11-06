@@ -19,7 +19,7 @@ Además, el componente **parcha** dos Deployments y ajusta un tercero (#28):
 | Kustomize | `kubectl apply -k kustomize/` | descomentar `components/order-tracking` en `kustomize/kustomization.yaml` |
 | Skaffold | `skaffold run` | `skaffold run -p order-tracking` |
 | Helm | `helm install …` | `--set orderTracking.enabled=true` |
-| CD (`cd-main.yaml`) | — | siempre encendido: despliega con `-p order-tracking` |
+| CD (`cd-main.yaml`) | — | siempre encendido: despliega con `-p aws`, cuyo overlay incluye este componente (#68) |
 
 El perfil de Skaffold no apunta a este componente directo: renderiza `kustomize/overlays/order-tracking/`, que es `kubernetes-manifests/` con el componente encima. Los parches necesitan a `frontend` y `checkoutservice` en la misma pasada de kustomize, y `skaffold.yaml` construye `kubernetes-manifests/`, no `kustomize/`.
 

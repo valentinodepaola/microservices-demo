@@ -9,8 +9,8 @@ output "public_ip" {
 }
 
 output "tienda_url" {
-  description = "URL publica de la tienda, una vez que el despliegue la publique en el puerto 80."
-  value       = "http://${aws_eip.k3s.public_ip}"
+  description = "URL publica de la tienda, una vez que el despliegue la publique. El nombre sale de sslip.io, que lo resuelve a la IP elastica, y tiene que coincidir con el host del Ingress (kustomize/components/https/ingress.yaml)."
+  value       = "https://${replace(aws_eip.k3s.public_ip, ".", "-")}.sslip.io"
 }
 
 output "kubeconfig_comando" {

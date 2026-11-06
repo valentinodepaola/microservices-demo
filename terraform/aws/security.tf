@@ -17,12 +17,23 @@ resource "aws_vpc_security_group_ingress_rule" "api_kubernetes" {
   ip_protocol       = "tcp"
 }
 
+# "Lets Encrypt" va sin apostrofo a proposito: AWS rechaza el ' en la
+# descripcion de una regla, y terraform validate no lo detecta (#68).
 resource "aws_vpc_security_group_ingress_rule" "tienda" {
   security_group_id = aws_security_group.k3s.id
-  description       = "La tienda, publicada por el ServiceLB de k3s en el puerto 80 del nodo."
+  description       = "La tienda por http. Traefik lo redirige a https, y Lets Encrypt entra por aqui para validar el nombre."
   cidr_ipv4         = "0.0.0.0/0"
   from_port         = 80
   to_port           = 80
+  ip_protocol       = "tcp"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "tienda_https" {
+  security_group_id = aws_security_group.k3s.id
+  description       = "La tienda por https, con el certificado de Lets Encrypt que pide Traefik."
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 443
+  to_port           = 443
   ip_protocol       = "tcp"
 }
 

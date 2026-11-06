@@ -21,7 +21,7 @@ Fluent Bit no tiene llaves de AWS: le pide credenciales al servicio de metadatos
 
 | Ruta | Encendido |
 |---|---|
-| Skaffold | `skaffold run -p order-tracking,cloudwatch-logs` |
+| Skaffold | `skaffold run -p aws,cloudwatch-logs` |
 | CD (`cd-main.yaml`) | siempre encendido |
 | A mano | `kubectl apply -k kustomize/components/cloudwatch-logs` |
 
