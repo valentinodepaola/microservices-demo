@@ -98,6 +98,16 @@ profiles:
   - op: add
     path: /manifests/kustomize/paths/1
     value: kustomize/components/network-policies
+# Fluent Bit, que manda los logs de la tienda a CloudWatch (#111). Como
+# network-policies, solo suma recursos, así que le basta una ruta aparte. Va
+# con /- (al final de la lista) y no en una posición fija para que se pueda
+# combinar con los otros perfiles sin pisarles la ruta. Solo sirve en AWS.
+#     skaffold run -p order-tracking,cloudwatch-logs
+- name: cloudwatch-logs
+  patches:
+  - op: add
+    path: /manifests/kustomize/paths/-
+    value: kustomize/components/cloudwatch-logs
 # The "order-tracking" profile turns on the order tracking feature (ADR 0007):
 # orderservice, redis-orders and the patches to frontend and checkoutservice.
 # Without it, skaffold run deploys the store exactly as before.
