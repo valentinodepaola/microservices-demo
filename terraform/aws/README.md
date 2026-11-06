@@ -17,7 +17,7 @@ Desde la Fase 3 crea también **la máquina de Vault**, aparte del clúster, seg
 | `aws_internet_gateway` | La salida a internet de la VPC |
 | `aws_route_table` + asociación | La ruta `0.0.0.0/0` hacia el gateway. Sin la asociación, la subred se queda colgando de la tabla principal y no tiene salida |
 | `aws_security_group` | El firewall del nodo |
-| 3 reglas de firewall | Entrada `6443` (API de Kubernetes) y `80` (la tienda); salida sin restricción |
+| 4 reglas de firewall | Entrada `6443` (API de Kubernetes), `80` y `443` (la tienda, por Traefik); salida sin restricción |
 | `aws_instance` | El nodo, `m5.large` con Ubuntu 24.04 `x86_64`, que instala k3s al arrancar |
 | `aws_eip` + asociación | Dirección pública fija |
 
