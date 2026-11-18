@@ -53,9 +53,10 @@ patches:
               value: "true"
             - name: ORDER_SERVICE_ADDR
               value: "orderservice:50051"
-# Duraciones de demo: el ciclo completo dura 5 minutos en vez de casi un día,
-# para que en la presentación se vea el pedido pasar por todas las etapas.
-# Son los valores de docs/modelo-del-pedido.md §5 (30s + 60s + 90s + 120s).
+# Duraciones de la tienda (docs/modelo-del-pedido.md §5). CREATED dura 1s, el
+# mínimo que acepta orderservice: cuando se guarda el pedido el cobro ya se hizo,
+# así que al abrir el seguimiento ya sale PAID, con Creado y Pagado en verde.
+# De ahí en adelante el estado cambia cada 6 horas; el ciclo dura unas 18 horas.
 # Los defaults del binario siguen siendo los de modo revisión.
 - patch: |-
     apiVersion: apps/v1
@@ -69,10 +70,10 @@ patches:
           - name: server
             env:
             - name: ORDER_CREATED_DURATION
-              value: "30s"
+              value: "1s"
             - name: ORDER_PAID_DURATION
-              value: "60s"
+              value: "6h"
             - name: ORDER_PREPARING_DURATION
-              value: "90s"
+              value: "6h"
             - name: ORDER_IN_TRANSIT_DURATION
-              value: "120s"
+              value: "6h"

@@ -88,7 +88,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $T" \
 
 ## El seguimiento de pedidos en el CD
 
-El seguimiento entró con el perfil `order-tracking`, que cambia `kubernetes-manifests/` por `kustomize/overlays/order-tracking/`, que agrega `orderservice` y `redis-orders` y parcha `frontend` y `checkoutservice` con `ENABLE_ORDER_TRACKING=true` ([ADR 0007](adr/0007-componente-opcional-con-kill-switch.md), #28). Las duraciones de cada etapa salen en modo demo: el ciclo completo dura 5 minutos.
+El seguimiento entró con el perfil `order-tracking`, que cambia `kubernetes-manifests/` por `kustomize/overlays/order-tracking/`, que agrega `orderservice` y `redis-orders` y parcha `frontend` y `checkoutservice` con `ENABLE_ORDER_TRACKING=true` ([ADR 0007](adr/0007-componente-opcional-con-kill-switch.md), #28). CREATED dura 1 segundo, porque el cobro ya se hizo cuando se guarda el pedido, y cada etapa siguiente dura 6 horas: el ciclo completo dura unas 18 horas.
 
 Con el perfil vienen tres cambios más en el workflow:
 
