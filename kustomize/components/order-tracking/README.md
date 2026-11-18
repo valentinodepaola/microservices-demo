@@ -10,7 +10,7 @@ Contiene dos piezas:
 Además, el componente **parcha** dos Deployments y ajusta un tercero (#28):
 
 - **`frontend`** y **`checkoutservice`**: les inyecta `ENABLE_ORDER_TRACKING=true` y `ORDER_SERVICE_ADDR=orderservice:50051`. Sin el componente no tienen esas variables y se comportan como siempre.
-- **`orderservice`**: le pone las duraciones de demo (`30s`, `60s`, `90s`, `120s`; el ciclo completo dura 5 minutos). Sin este parche usaría los defaults de modo revisión, que suman casi un día ([modelo del pedido §5](../../../docs/modelo-del-pedido.md)).
+- **`orderservice`**: le pone `1s` a CREATED y `6h` a las demás etapas. Como el cobro ya se hizo cuando se guarda el pedido, el seguimiento abre en PAID, con Creado y Pagado en verde, y de ahí el estado cambia cada 6 horas (unas 18 horas en total). Sin este parche usaría los defaults de modo revisión, que suman casi un día ([modelo del pedido §5](../../../docs/modelo-del-pedido.md)).
 
 ## Dónde se enciende
 

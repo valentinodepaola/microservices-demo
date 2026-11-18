@@ -244,14 +244,15 @@ orderTracking:
       limits:
         cpu: 125m
         memory: 256Mi
-  # Duraciones de demo (docs/modelo-del-pedido.md §5): ciclo de 5 minutos.
+  # Duraciones de la tienda (docs/modelo-del-pedido.md §5): CREATED dura 1s para
+  # que el pedido salga ya pagado; las demas etapas duran 6 horas.
   # Para los defaults del binario (modo revision, casi un dia), pasar
   # --set orderTracking.durations=null.
   durations:
-    created: 30s
-    paid: 60s
-    preparing: 90s
-    inTransit: 120s
+    created: 1s
+    paid: 6h
+    preparing: 6h
+    inTransit: 6h
 
 # @TODO: This service is not currently available in Helm.
 # https://github.com/GoogleCloudPlatform/microservices-demo/tree/main/kustomize/components/shopping-assistant
